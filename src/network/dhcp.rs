@@ -1,6 +1,7 @@
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[allow(unused_imports)]
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
