@@ -16,9 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
-        with:
-          components: rustfmt
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup component add rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -27,9 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
-        with:
-          components: clippy
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup component add clippy
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -38,7 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - name: Install Rust
+        run: rustup update stable
       - name: Run tests
         run: cargo test --all-features -- --nocapture
 
@@ -55,11 +58,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/.package-cache
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
       - name: Cache target directory
         uses: actions/cache@v4
         with:
@@ -67,9 +67,10 @@ jobs:
           key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-target-
-      - uses: dtolnay/rust-action@stable
+      - name: Install Rust
+        run: rustup update stable
       - name: Build
-        run: cargo build --release --verbose
+        run: cargo build --release
 
   build-docker:
     name: Docker Build
@@ -80,15 +81,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build Docker image
-        run: |
-          docker build -t sentinel-rs:latest .
+        run: docker build -t sentinel-rs:latest .
 
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - name: Install Rust
+        run: rustup update stable
       - name: Build docs
         run: cargo doc --no-deps --all-features
         env:
@@ -100,10 +101,9 @@ jobs:
     needs: [test]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
-        with:
-          components: llvm-tools-preview
-      - name: Install tarpaulin
+      - name: Install Rust
+        run: rustup update stable
+      - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin
       - name: Generate coverage report
         run: cargo tarpaulin --out Xml --verbose
@@ -120,7 +120,8 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-action@stable
+      - name: Install Rust
+        run: rustup update stable
       - name: Publish to Crates.io
         run: cargo publish --release
         env:
@@ -131,7 +132,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run security audit
+      - name: Install Rust nightly for cargo-audit
         run: |
-          cargo install cargo-audit || true
+          rustup update nightly
+          rustup default nightly
+      - name: Install and run cargo-audit
+        run: |
+          cargo install cargo-audit
           cargo audit
