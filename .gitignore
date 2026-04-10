@@ -1,0 +1,33 @@
+# Build artifacts
+target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+
+# Backup
+backups/
+
+# Docker
+*.tar

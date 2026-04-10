@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sentinel-RS{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script>
+        const i18n = {
+            locale: localStorage.getItem('locale') || 'en',
+            translations: {
+                en: {
+                    dashboard: 'Dashboard',
+                    blocking: 'Blocking',
+                    network_security_monitor: 'Network Security Monitor',
+                    live: 'Live',
+                    disconnected: 'Disconnected',
+                    total_packets: 'Total Packets',
+                    active_devices: 'Active Devices',
+                    alerts: 'Alerts',
+                    bandwidth: 'Bandwidth',
+                    traffic_over_time: 'Traffic Over Time',
+                    protocol_distribution: 'Protocol Distribution',
+                    top_talkers: 'Top Talkers',
+                    bandwidth_usage: 'Bandwidth Usage',
+                    live_traffic: 'Live Traffic',
+                    clear: 'Clear',
+                    time: 'Time',
+                    source: 'Source',
+                    destination: 'Destination',
+                    protocol: 'Protocol',
+                    size: 'Size',
+                    network_devices: 'Network Devices',
+                    loading_devices: 'Loading devices...',
+                    security_alerts: 'Security Alerts',
+                    no_alerts: 'No alerts',
+                    trackers_blocked: 'Trackers Blocked',
+                    malware_blocked: 'Malware Blocked',
+                    custom_rules: 'Custom Rules',
+                    dns_sinkhole: 'DNS Sinkhole',
+                    language: 'Language',
+                    settings: 'Settings',
+                    update_blocklists: 'Update Blocklists',
+                    blocklist_updated: 'Blocklists updated successfully',
+                    no_data: 'No data'
+                },
+                pt: {
+                    dashboard: 'Painel',
+                    blocking: 'Bloqueio',
+                    network_security_monitor: 'Monitor de Segurança de Rede',
+                    live: 'Ao Vivo',
+                    disconnected: 'Desconectado',
+                    total_packets: 'Total de Pacotes',
+                    active_devices: 'Dispositivos Ativos',
+                    alerts: 'Alertas',
+                    bandwidth: 'Largura de Banda',
+                    traffic_over_time: 'Tráfego ao Longo do Tempo',
+                    protocol_distribution: 'Distribuição de Protocolos',
+                    top_talkers: 'Principais Comunicadores',
+                    bandwidth_usage: 'Uso de Largura de Banda',
+                    live_traffic: 'Tráfego ao Vivo',
+                    clear: 'Limpar',
+                    time: 'Hora',
+                    source: 'Origem',
+                    destination: 'Destino',
+                    protocol: 'Protocolo',
+                    size: 'Tamanho',
+                    network_devices: 'Dispositivos de Rede',
+                    loading_devices: 'Carregando dispositivos...',
+                    security_alerts: 'Alertas de Segurança',
+                    no_alerts: 'Sem alertas',
+                    trackers_blocked: 'Rastreadores Bloqueados',
+                    malware_blocked: 'Malware Bloqueado',
+                    custom_rules: 'Regras Personalizadas',
+                    dns_sinkhole: 'DNS Sinkhole',
+                    language: 'Idioma',
+                    settings: 'Configurações',
+                    update_blocklists: 'Atualizar Blocklists',
+                    blocklist_updated: 'Blocklists atualizadas com sucesso',
+                    no_data: 'Sem dados'
+                },
+                es: {
+                    dashboard: 'Panel',
+                    blocking: 'Bloqueo',
+                    network_security_monitor: 'Monitor de Seguridad de Red',
+                    live: 'En Vivo',
+                    disconnected: 'Desconectado',
+                    total_packets: 'Total de Paquetes',
+                    active_devices: 'Dispositivos Activos',
+                    alerts: 'Alertas',
+                    bandwidth: 'Ancho de Banda',
+                    traffic_over_time: 'Tráfico en el Tiempo',
+                    protocol_distribution: 'Distribución de Protocolos',
+                    top_talkers: 'Principales Comunicadores',
+                    bandwidth_usage: 'Uso de Ancho de Banda',
+                    live_traffic: 'Tráfico en Vivo',
+                    clear: 'Limpiar',
+                    time: 'Hora',
+                    source: 'Origen',
+                    destination: 'Destino',
+                    protocol: 'Protocolo',
+                    size: 'Tamaño',
+                    network_devices: 'Dispositivos de Red',
+                    loading_devices: 'Cargando dispositivos...',
+                    security_alerts: 'Alertas de Seguridad',
+                    no_alerts: 'Sin alertas',
+                    trackers_blocked: 'Rastreadores Bloqueados',
+                    malware_blocked: 'Malware Bloqueado',
+                    custom_rules: 'Reglas Personalizadas',
+                    dns_sinkhole: 'DNS Sinkhole',
+                    language: 'Idioma',
+                    settings: 'Configuración',
+                    update_blocklists: 'Actualizar Blocklists',
+                    blocklist_updated: 'Blocklists actualizadas correctamente',
+                    no_data: 'Sin datos'
+                }
+            },
+            t(key) {
+                return this.translations[this.locale]?.[key] || this.translations.en[key] || key;
+            },
+            init() {
+                document.querySelectorAll('[data-i18n]').forEach(el => {
+                    const key = el.getAttribute('data-i18n');
+                    el.textContent = this.t(key);
+                });
+            },
+            setLocale(locale) {
+                this.locale = locale;
+                localStorage.setItem('locale', locale);
+                this.init();
+            }
+        };
+        document.addEventListener('DOMContentLoaded', () => i18n.init());
+    </script>
+    <style>
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .traffic-bar { transition: width 0.3s ease; }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-cyan-400">Sentinel-RS</h1>
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-sm text-gray-300 hover:text-white" data-i18n="dashboard">Dashboard</a>
+                <a href="/blocking" class="text-sm text-red-400 hover:text-red-300" data-i18n="blocking">Blocking</a>
+                <span class="text-sm text-gray-400" data-i18n="network_security_monitor">Network Security Monitor</span>
+                <div id="connection-status" class="flex items-center">
+                    <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                    <span class="ml-2 text-xs text-green-400" data-i18n="live">Live</span>
+                </div>
+                <select onchange="i18n.setLocale(this.value)" class="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded border border-gray-600">
+                    <option value="en">EN</option>
+                    <option value="pt">PT</option>
+                    <option value="es">ES</option>
+                </select>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        const eventSource = new EventSource('/events');
+
+        eventSource.addEventListener('packet', (e) => {
+            const p = JSON.parse(e.data);
+            if (typeof onPacketReceived === 'function') onPacketReceived(p);
+        });
+
+        eventSource.addEventListener('alert', (e) => {
+            const a = JSON.parse(e.data);
+            if (typeof onAlertReceived === 'function') onAlertReceived(a);
+        });
+
+        eventSource.onerror = () => {
+            const status = document.getElementById('connection-status');
+            if (status) status.innerHTML = 
+                '<span class="w-2 h-2 bg-red-400 rounded-full"></span><span class="ml-2 text-xs text-red-400" data-i18n="disconnected">' + i18n.t('disconnected') + '</span>';
+        };
+    </script>
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

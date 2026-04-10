@@ -1,0 +1,17 @@
+target/
+Cargo.lock
+.git/
+.gitignore
+*.md
+!README.md
+.vscode/
+.idea/
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal

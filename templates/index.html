@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm" data-i18n="total_packets">Total Packets</div>
+        <div class="text-2xl font-bold text-white" id="total-packets">0</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm" data-i18n="active_devices">Active Devices</div>
+        <div class="text-2xl font-bold text-cyan-400" id="active-devices">0</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm" data-i18n="alerts">Alerts</div>
+        <div class="text-2xl font-bold text-orange-400" id="alert-count">0</div>
+    </div>
+    <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div class="text-gray-400 text-sm" data-i18n="bandwidth">Bandwidth</div>
+        <div class="text-2xl font-bold text-purple-400" id="bandwidth">0 KB/s</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700">
+        <div class="px-4 py-3 border-b border-gray-700">
+            <h2 class="font-semibold text-lg" data-i18n="traffic_over_time">Traffic Over Time</h2>
+        </div>
+        <div class="p-4 h-64">
+            <canvas id="trafficChart"></canvas>
+        </div>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700">
+        <div class="px-4 py-3 border-b border-gray-700">
+            <h2 class="font-semibold text-lg" data-i18n="protocol_distribution">Protocol Distribution</h2>
+        </div>
+        <div class="p-4 h-64 flex items-center justify-center">
+            <div class="w-full h-full max-w-[200px]">
+                <canvas id="protocolChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="bg-gray-800 rounded-lg border border-gray-700">
+        <div class="px-4 py-3 border-b border-gray-700">
+            <h2 class="font-semibold text-lg" data-i18n="top_talkers">Top Talkers</h2>
+        </div>
+        <div class="p-4 h-48">
+            <canvas id="talkersChart"></canvas>
+        </div>
+    </div>
+    <div class="bg-gray-800 rounded-lg border border-gray-700">
+        <div class="px-4 py-3 border-b border-gray-700">
+            <h2 class="font-semibold text-lg" data-i18n="bandwidth_usage">Bandwidth Usage</h2>
+        </div>
+        <div class="p-4 h-48">
+            <canvas id="bandwidthChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2">
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                <h2 class="font-semibold text-lg" data-i18n="live_traffic">Live Traffic</h2>
+                <button class="text-xs text-cyan-400 hover:text-cyan-300" onclick="clearPackets()" data-i18n="clear">Clear</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-750 text-gray-400">
+                        <tr>
+                            <th class="px-4 py-2 text-left" data-i18n="time">Time</th>
+                            <th class="px-4 py-2 text-left" data-i18n="source">Source</th>
+                            <th class="px-4 py-2 text-left" data-i18n="destination">Destination</th>
+                            <th class="px-4 py-2 text-left" data-i18n="protocol">Protocol</th>
+                            <th class="px-4 py-2 text-right" data-i18n="size">Size</th>
+                        </tr>
+                    </thead>
+                    <tbody id="packet-table" class="divide-y divide-gray-700">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="space-y-6">
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="px-4 py-3 border-b border-gray-700">
+                <h2 class="font-semibold text-lg">Network Devices</h2>
+            </div>
+            <div id="devices-list" class="p-4 space-y-2 max-h-64 overflow-y-auto">
+                <div class="text-gray-500 text-center" data-i18n="loading_devices">Loading devices...</div>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-lg border border-gray-700">
+            <div class="px-4 py-3 border-b border-gray-700">
+                <h2 class="font-semibold text-lg" data-i18n="security_alerts">Security Alerts</h2>
+            </div>
+            <div id="alerts-list" class="p-4 space-y-2 max-h-64 overflow-y-auto">
+                <div class="text-gray-500 text-center" data-i18n="no_alerts">No alerts</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+    let trafficChart, protocolChart, talkersChart, bandwidthChart;
+    const packets = [];
+    let packetCount = 0;
+    let alertCount = 0;
+    let protocolCounts = { TCP: 0, UDP: 0, ICMP: 0, Unknown: 0 };
+    const trafficHistory = { labels: [], bytes: [] };
+
+    function initCharts() {
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } }
+        };
+
+        // Traffic Over Time
+        trafficChart = new Chart(document.getElementById('trafficChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Traffic',
+                    data: [],
+                    borderColor: '#06b6d4',
+                    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: chartOptions
+        });
+
+        // Protocol Distribution
+        protocolChart = new Chart(document.getElementById('protocolChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['TCP', 'UDP', 'ICMP', 'Unknown'],
+                datasets: [{
+                    data: [0, 0, 0, 0],
+                    backgroundColor: ['#06b6d4', '#22c55e', '#eab308', '#6b7280']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'right' } }
+            }
+        });
+
+        // Top Talkers
+        talkersChart = new Chart(document.getElementById('talkersChart'), {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Bytes',
+                    data: [],
+                    backgroundColor: '#8b5cf6'
+                }]
+            },
+            options: {
+                ...chartOptions,
+                indexAxis: 'y'
+            }
+        });
+
+        // Bandwidth
+        bandwidthChart = new Chart(document.getElementById('bandwidthChart'), {
+            type: 'bar',
+            data: {
+                labels: ['Upload', 'Download'],
+                datasets: [{
+                    data: [0, 0],
+                    backgroundColor: ['#f59e0b', '#3b82f6']
+                }]
+            },
+            options: chartOptions
+        });
+    }
+
+    function updateCharts() {
+        const now = new Date().toLocaleTimeString();
+        
+        // Update traffic chart
+        trafficHistory.labels.push(now);
+        trafficHistory.bytes.push(packets.slice(0, 10).reduce((sum, p) => sum + (p.size || 0), 0));
+        
+        if (trafficHistory.labels.length > 20) {
+            trafficHistory.labels.shift();
+            trafficHistory.bytes.shift();
+        }
+        
+        trafficChart.data.labels = trafficHistory.labels;
+        trafficChart.data.datasets[0].data = trafficHistory.bytes;
+        trafficChart.update();
+
+        // Update protocol chart
+        protocolChart.data.datasets[0].data = [
+            protocolCounts.TCP,
+            protocolCounts.UDP,
+            protocolCounts.ICMP,
+            protocolCounts.Unknown
+        ];
+        protocolChart.update();
+
+        // Update talkers
+        const ipCounts = {};
+        packets.slice(0, 20).forEach(p => {
+            if (p.src_ip) ipCounts[p.src_ip] = (ipCounts[p.src_ip] || 0) + (p.size || 0);
+        });
+        const sorted = Object.entries(ipCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        talkersChart.data.labels = sorted.map(s => s[0]);
+        talkersChart.data.datasets[0].data = sorted.map(s => s[1]);
+        talkersChart.update();
+    }
+
+    function onPacketReceived(packet) {
+        packets.unshift(packet);
+        if (packets.length > 50) packets.pop();
+        packetCount++;
+        protocolCounts[packet.protocol] = (protocolCounts[packet.protocol] || 0) + 1;
+        updatePacketTable();
+        updateStats();
+        
+        // Update charts every 10 packets
+        if (packetCount % 10 === 0) updateCharts();
+    }
+
+    function onAlertReceived(alert) {
+        alertCount++;
+        const alertsList = document.getElementById('alerts-list');
+        const alertEl = document.createElement('div');
+        alertEl.className = `p-2 rounded text-sm ${alert.severity === 'Critical' ? 'bg-red-900/50 border border-red-700' : 'bg-yellow-900/50 border border-yellow-700'}`;
+        alertEl.innerHTML = `
+            <div class="flex justify-between items-start">
+                <span class="font-medium ${alert.severity === 'Critical' ? 'text-red-400' : 'text-yellow-400'}">${alert.alert_type}</span>
+                <span class="text-xs text-gray-500">${new Date().toLocaleTimeString()}</span>
+            </div>
+            <div class="text-gray-300 text-xs mt-1">${alert.message || ''}</div>
+        `;
+        alertsList.insertBefore(alertEl, alertsList.firstChild);
+        if (alertsList.children.length > 10) alertsList.removeChild(alertsList.lastChild);
+        document.getElementById('alert-count').textContent = alertCount;
+    }
+
+    function updatePacketTable() {
+        const tbody = document.getElementById('packet-table');
+        tbody.innerHTML = packets.map(p => `
+            <tr class="hover:bg-gray-750 transition-colors">
+                <td class="px-4 py-2 text-gray-400">${new Date().toLocaleTimeString()}</td>
+                <td class="px-4 py-2">${p.src_ip || ''}${p.src_port ? ':' + p.src_port : ''}</td>
+                <td class="px-4 py-2">${p.dst_ip || ''}${p.dst_port ? ':' + p.dst_port : ''}</td>
+                <td class="px-4 py-2">
+                    <span class="px-2 py-1 rounded text-xs font-medium ${
+                        p.protocol === 'TCP' ? 'bg-cyan-900 text-cyan-300' :
+                        p.protocol === 'UDP' ? 'bg-green-900 text-green-300' :
+                        'bg-yellow-900 text-yellow-300'
+                    }">${p.protocol || 'Unknown'}</span>
+                </td>
+                <td class="px-4 py-2 text-right text-gray-400">${p.size || 0} B</td>
+            </tr>
+        `).join('');
+    }
+
+    function updateStats() {
+        document.getElementById('total-packets').textContent = packetCount;
+        document.getElementById('active-devices').textContent = new Set(packets.map(p => p.src_mac || p.dst_mac)).size;
+        
+        const totalBytes = packets.reduce((sum, p) => sum + (p.size || 0), 0);
+        document.getElementById('bandwidth').textContent = formatBytes(totalBytes) + '/s';
+        
+        // Update bandwidth chart
+        const upload = packets.slice(0, 10).reduce((sum, p) => sum + (p.size || 0), 0) / 2;
+        const download = upload;
+        bandwidthChart.data.datasets[0].data = [upload, download];
+        bandwidthChart.update();
+    }
+
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function clearPackets() {
+        packets.length = 0;
+        updatePacketTable();
+    }
+
+    // Initialize
+    initCharts();
+</script>
+{% endblock %}

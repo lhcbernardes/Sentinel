@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel-RS - Network Security Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .risk-low { @apply bg-green-100 text-green-800; }
+        .risk-medium { @apply bg-yellow-100 text-yellow-800; }
+        .risk-high { @apply bg-orange-100 text-orange-800; }
+        .risk-critical { @apply bg-red-100 text-red-800; }
+        .traffic-bar { transition: width 0.3s ease; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-cyan-400">Sentinel-RS</h1>
+            <div class="flex items-center space-x-4">
+                <a href="/" class="text-sm text-gray-300 hover:text-white">Dashboard</a>
+                <a href="/blocking" class="text-sm text-red-400 hover:text-red-300">Blocking</a>
+                <span class="text-sm text-gray-400">Network Security Monitor</span>
+                <div id="connection-status" class="flex items-center">
+                    <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                    <span class="ml-2 text-xs text-green-400">Live</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        const eventSource = new EventSource('/events');
+        const packets = [];
+        const protocolCounts = { TCP: 0, UDP: 0, ICMP: 0 };
+        let packetCount = 0;
+
+        eventSource.addEventListener('packet', (e) => {
+            const p = JSON.parse(e.data);
+            packets.unshift(p);
+            if (packets.length > 100) packets.pop();
+            packetCount++;
+            if (p.protocol) protocolCounts[p.protocol] = (protocolCounts[p.protocol] || 0) + 1;
+            updatePacketTable();
+            updateStats();
+        });
+
+        eventSource.addEventListener('alert', (e) => {
+            const a = JSON.parse(e.data);
+            showAlert(a);
+        });
+
+        function updatePacketTable() {
+            const tbody = document.getElementById('packet-table');
+            if (!tbody) return;
+            tbody.innerHTML = packets.slice(0, 20).map(p => `
+                <tr class="hover:bg-gray-750">
+                    <td class="px-4 py-2 text-gray-400">${p.timestamp || ''}</td>
+                    <td class="px-4 py-2 font-mono text-cyan-400">${p.src_ip || ''}</td>
+                    <td class="px-4 py-2 font-mono text-green-400">${p.dst_ip || ''}</td>
+                    <td class="px-4 py-2">${p.protocol || ''}</td>
+                    <td class="px-4 py-2 text-right text-gray-400">${p.size || 0} B</td>
+                </tr>
+            `).join('');
+        }
+
+        function updateStats() {
+            const totalPackets = document.getElementById('total-packets');
+            if (totalPackets) totalPackets.textContent = packetCount;
+            
+            const activeDevices = document.getElementById('active-devices');
+            if (activeDevices) {
+                const unique = new Set(packets.map(p => p.src_mac || p.dst_mac));
+                activeDevices.textContent = unique.size;
+            }
+        }
+
+        eventSource.onerror = () => {
+            const status = document.getElementById('connection-status');
+            if (status) status.innerHTML = 
+                '<span class="w-2 h-2 bg-red-400 rounded-full"></span><span class="ml-2 text-xs text-red-400">Disconnected</span>';
+        };
+    </script>
+</body>
+</html>
