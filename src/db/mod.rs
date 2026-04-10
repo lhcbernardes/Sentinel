@@ -10,6 +10,7 @@ use crate::devices::Device;
 
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
+    path: std::path::PathBuf,
 }
 
 impl Database {
@@ -18,6 +19,7 @@ impl Database {
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
+            path: path.to_path_buf(),
         };
 
         db.init_schema()?;
@@ -280,7 +282,7 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM packets", [], |row| row.get(0))
             .unwrap_or(0);
 
-        let db_size_bytes = std::fs::metadata("data/sentinel.db")
+        let db_size_bytes = std::fs::metadata(&self.path)
             .map(|m| m.len())
             .unwrap_or(0);
 
@@ -305,6 +307,7 @@ impl Clone for Database {
     fn clone(&self) -> Self {
         Self {
             conn: Arc::clone(&self.conn),
+            path: self.path.clone(),
         }
     }
 }

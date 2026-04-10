@@ -1,5 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     response::IntoResponse,
     response::Json,
     routing::{delete, get, post, put},
@@ -14,6 +15,7 @@ use crate::AppState;
 use crate::web::api::{
     ApiResponse, BlocklistResponse, DnsQueryResponse, StatusResponse, TrafficStatsResponse,
 };
+use crate::web::auth::{require_admin, require_auth};
 
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {
@@ -66,6 +68,8 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/export/siem", get(api_export_siem))
 }
 
+// ─── status / health ──────────────────────────────────────────────────────────
+
 async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let stats = state.stats.get_stats();
     let status = StatusResponse {
@@ -84,13 +88,15 @@ async fn api_health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "healthy", "timestamp": chrono::Utc::now().to_rfc3339() }))
 }
 
+// ─── autenticação ─────────────────────────────────────────────────────────────
+
 async fn api_login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<crate::auth::LoginRequest>,
 ) -> impl IntoResponse {
     match state.auth.login(payload) {
-        Some(r) => Json(ApiResponse::ok(r)),
-        None => Json(ApiResponse::err("Invalid credentials".to_string())),
+        Ok(r) => (StatusCode::OK, Json(ApiResponse::ok(r))).into_response(),
+        Err(e) => (StatusCode::UNAUTHORIZED, Json(ApiResponse::<()>::err(e))).into_response(),
     }
 }
 
@@ -105,9 +111,11 @@ async fn api_logout(
     {
         state.auth.logout(token);
     }
-    Json(ApiResponse::ok("Logged out".to_string()))
+    Json(ApiResponse::ok("Logged out"))
 }
 
+/// Renova um token válido sem exigir senha novamente.
+/// O token antigo é revogado e um novo token é emitido.
 async fn api_refresh(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -117,30 +125,37 @@ async fn api_refresh(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
     {
-        Some(t) => t,
-        None => return Json(ApiResponse::err("Missing token".to_string())),
+        Some(t) => t.to_string(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ApiResponse::<()>::err("Token não fornecido".to_string())),
+            )
+                .into_response()
+        }
     };
-    let payload = match state.auth.verify_token(token) {
-        Some(p) => p,
-        None => return Json(ApiResponse::err("Invalid token".to_string())),
-    };
-    let req = crate::auth::LoginRequest {
-        username: payload.sub,
-        password: String::new(),
-    };
-    match state.auth.login(req) {
-        Some(r) => Json(ApiResponse::ok(r)),
-        None => Json(ApiResponse::err("Failed to refresh".to_string())),
+
+    match state.auth.renew_token(&token) {
+        Some(r) => (StatusCode::OK, Json(ApiResponse::ok(r))).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<()>::err(
+                "Token inválido ou expirado".to_string(),
+            )),
+        )
+            .into_response(),
     }
 }
+
+// ─── dispositivos ─────────────────────────────────────────────────────────────
 
 async fn api_devices_list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let devices = state.device_manager.get_all();
-    let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).min(500);
     let devices: Vec<_> = devices
         .into_iter()
         .skip((page - 1) * limit)
@@ -154,18 +169,24 @@ async fn api_device_detail(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.device_manager.get_by_mac(&id) {
-        Some(d) => Json(ApiResponse::ok(d)),
-        None => Json(ApiResponse::err("Device not found".to_string())),
+        Some(d) => Json(ApiResponse::ok(d)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::err("Device not found".to_string())),
+        )
+            .into_response(),
     }
 }
+
+// ─── pacotes ──────────────────────────────────────────────────────────────────
 
 async fn api_packets_list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let packets: Vec<_> = state.packet_cache.read().iter().cloned().collect();
-    let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).min(500);
     let packets: Vec<_> = packets
         .into_iter()
         .skip((page - 1) * limit)
@@ -183,13 +204,15 @@ async fn api_packets_stats(State(state): State<Arc<AppState>>) -> impl IntoRespo
     ))
 }
 
+// ─── alertas ─────────────────────────────────────────────────────────────────
+
 async fn api_alerts_list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let alerts = state.anomaly_detector.get_recent_alerts();
-    let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).min(500);
     let alerts: Vec<_> = alerts
         .into_iter()
         .skip((page - 1) * limit)
@@ -198,13 +221,15 @@ async fn api_alerts_list(
     Json(ApiResponse::ok(alerts))
 }
 
+// ─── DNS ──────────────────────────────────────────────────────────────────────
+
 async fn api_dns_queries(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let queries = state.dns_sinkhole.get_recent_queries();
-    let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).min(500);
     let queries: Vec<_> = queries
         .into_iter()
         .skip((page - 1) * limit)
@@ -232,6 +257,8 @@ async fn api_dns_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     ))
 }
 
+// ─── blocklist (exige admin para mutação) ─────────────────────────────────────
+
 async fn api_blocklist_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let stats = state.blocklist.stats();
     Json(ApiResponse::ok(BlocklistResponse {
@@ -249,35 +276,55 @@ async fn api_blocked_ips(State(state): State<Arc<AppState>>) -> impl IntoRespons
 
 async fn api_block_ip(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<BlockIpRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     match state.firewall.block_ip(&payload.ip) {
-        Ok(_) => Json(ApiResponse::ok(())),
-        Err(e) => Json(ApiResponse::err(e)),
+        Ok(_) => Json(ApiResponse::ok(())).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::err(e))).into_response(),
     }
 }
 
 async fn api_unblock_ip(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(ip): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     match state.firewall.unblock_ip(&ip) {
-        Ok(_) => Json(ApiResponse::ok(())),
-        Err(e) => Json(ApiResponse::err(e)),
+        Ok(_) => Json(ApiResponse::ok(())).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::err(e))).into_response(),
     }
 }
 
 async fn api_block_domain(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<BlockDomainRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     state.blocklist.add_custom_block(payload.domain);
-    Json(ApiResponse::ok(()))
+    Json(ApiResponse::ok(())).into_response()
 }
 
-async fn api_update_blocklist() -> impl IntoResponse {
-    Json(ApiResponse::ok("Blocklist update initiated".to_string()))
+async fn api_update_blocklist(
+    State(_state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&_state, &headers) {
+        return resp;
+    }
+    Json(ApiResponse::ok("Blocklist update initiated")).into_response()
 }
+
+// ─── firewall ─────────────────────────────────────────────────────────────────
 
 async fn api_firewall_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let stats = state.firewall.stats();
@@ -295,12 +342,14 @@ async fn api_firewall_rules(State(state): State<Arc<AppState>>) -> impl IntoResp
     Json(ApiResponse::ok(rules))
 }
 
+// ─── tráfego ─────────────────────────────────────────────────────────────────
+
 async fn api_traffic_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let packets: Vec<_> = state.packet_cache.read().iter().cloned().collect();
     let total_bytes: u64 = packets.iter().map(|p| p.size as u64).sum();
     let mut protocol_counts = std::collections::HashMap::new();
     for p in &packets {
-        *protocol_counts.entry(p.protocol.to_string()).or_insert(0) += 1;
+        *protocol_counts.entry(p.protocol.to_string()).or_insert(0u64) += 1;
     }
     let mut top_protocols: Vec<_> = protocol_counts.into_iter().collect();
     top_protocols.sort_by(|a, b| b.1.cmp(&a.1));
@@ -320,63 +369,152 @@ async fn api_traffic_flows(
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let flows: Vec<_> = state.netflow_collector.read().iter().cloned().collect();
-    let page = params.page.unwrap_or(1);
-    let limit = params.limit.unwrap_or(50);
-    let flows: Vec<_> = flows.into_iter().skip((page - 1) * limit).take(limit).map(|f| serde_json::json!({ "src_addr": f.src_addr, "dst_addr": f.dst_addr, "bytes": f.bytes })).collect();
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).min(500);
+    let flows: Vec<_> = flows
+        .into_iter()
+        .skip((page - 1) * limit)
+        .take(limit)
+        .map(|f| {
+            serde_json::json!({ "src_addr": f.src_addr, "dst_addr": f.dst_addr, "bytes": f.bytes })
+        })
+        .collect();
     Json(ApiResponse::ok(flows))
 }
 
-async fn api_config_get() -> impl IntoResponse {
+// ─── config ───────────────────────────────────────────────────────────────────
+
+async fn api_config_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    // TODO: retornar configuração real do blocklist
     Json(ApiResponse::ok(
         serde_json::json!({ "block_trackers": true, "block_malware": true }),
     ))
+    .into_response()
 }
 
-async fn api_users_list(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(ApiResponse::ok(state.auth.list_users()))
+// ─── gerenciamento de usuários (exige auth / admin) ───────────────────────────
+
+/// Lista usuários — exige autenticação.
+async fn api_users_list(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    Json(ApiResponse::ok(state.auth.list_users())).into_response()
 }
 
+/// Cria usuário — exige role admin.
 async fn api_user_create(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     let role = if payload.admin {
         UserRole::Admin
     } else {
         UserRole::Viewer
     };
-    if state
-        .auth
-        .add_user(payload.username, payload.password, role)
-    {
-        Json(ApiResponse::ok(()))
+    if state.auth.add_user(payload.username, payload.password, role) {
+        Json(ApiResponse::ok(())).into_response()
     } else {
-        Json(ApiResponse::err("User exists".to_string()))
+        (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<()>::err("Usuário já existe".to_string())),
+        )
+            .into_response()
     }
 }
 
 async fn api_user_detail(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
     let users = state.auth.list_users();
     match users.into_iter().find(|u| u.username == username) {
-        Some(u) => Json(ApiResponse::ok(u)),
-        None => Json(ApiResponse::err("User not found".to_string())),
+        Some(u) => Json(ApiResponse::ok(u)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::err("Usuário não encontrado".to_string())),
+        )
+            .into_response(),
     }
 }
 
+/// Troca de senha com verificação de autorização:
+/// - Admin pode trocar qualquer senha sem fornecer a senha atual.
+/// - Usuário comum só pode trocar a própria senha e DEVE fornecer `old_password`.
 async fn api_user_password(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(username): Path<String>,
     Json(payload): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
+    let caller = match require_auth(&state, &headers) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    if caller.role != "admin" {
+        // Usuário comum: só pode alterar a própria senha
+        if caller.sub != username {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ApiResponse::<()>::err(
+                    "Não é permitido alterar a senha de outro usuário".to_string(),
+                )),
+            )
+                .into_response();
+        }
+        // E deve fornecer a senha atual
+        match &payload.old_password {
+            Some(old) => {
+                if !state.auth.verify_current_password(&username, old) {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(ApiResponse::<()>::err("Senha atual incorreta".to_string())),
+                    )
+                        .into_response();
+                }
+            }
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<()>::err(
+                        "old_password é obrigatório".to_string(),
+                    )),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     if state.auth.change_password(&username, &payload.new_password) {
-        Json(ApiResponse::ok(()))
+        Json(ApiResponse::ok(())).into_response()
     } else {
-        Json(ApiResponse::err("Failed".to_string()))
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::err("Usuário não encontrado".to_string())),
+        )
+            .into_response()
     }
 }
+
+// ─── netflow ─────────────────────────────────────────────────────────────────
 
 async fn api_netflow_collect(
     State(state): State<Arc<AppState>>,
@@ -385,17 +523,20 @@ async fn api_netflow_collect(
     let mut c = state.netflow_collector.write();
     if let Ok(r) = serde_json::from_value::<crate::NetFlowRecord>(flow) {
         c.push(r);
-        if c.len() > 10000 {
-            c.drain(0..5000);
+        // Cap para evitar OOM sob alta carga
+        if c.len() > 10_000 {
+            c.drain(0..5_000);
         }
     }
-    Json(ApiResponse::ok(()))
+    Json(ApiResponse::ok(())).into_response()
 }
 
 async fn api_netflow_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let flows = state.netflow_collector.read();
     Json(ApiResponse::ok(serde_json::json!({ "flows": flows.len() })))
 }
+
+// ─── DPI ─────────────────────────────────────────────────────────────────────
 
 async fn api_dpi_inspect(
     State(state): State<Arc<AppState>>,
@@ -414,10 +555,16 @@ async fn api_dpi_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     ))
 }
 
+// ─── SIEM export ──────────────────────────────────────────────────────────────
+
 async fn api_export_siem(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<SiemParams>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
     let logs: Vec<_> = state.logs.get_recent(100);
     let format = params.format.as_deref().unwrap_or("syslog");
     let data = match format {
@@ -428,32 +575,41 @@ async fn api_export_siem(
             .collect::<Vec<_>>()
             .join("\n"),
     };
-    Json(ApiResponse::ok(data))
+    Json(ApiResponse::ok(data)).into_response()
 }
+
+// ─── request structs ──────────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
 struct BlockIpRequest {
     ip: String,
 }
+
 #[derive(serde::Deserialize)]
 struct BlockDomainRequest {
     domain: String,
 }
+
 #[derive(serde::Deserialize)]
 struct CreateUserRequest {
     username: String,
     password: String,
     admin: bool,
 }
+
 #[derive(serde::Deserialize)]
 struct ChangePasswordRequest {
+    /// Senha atual (obrigatória para usuários comuns, ignorada para admins).
+    old_password: Option<String>,
     new_password: String,
 }
+
 #[derive(serde::Deserialize)]
 struct DpiInspectRequest {
     data: String,
     protocol: String,
 }
+
 #[derive(serde::Deserialize)]
 struct SiemParams {
     format: Option<String>,

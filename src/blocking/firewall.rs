@@ -6,43 +6,15 @@ use std::sync::Arc;
 
 use crate::blocking::blocklist::Blocklist;
 
+/// Valida e normaliza um endereço IP usando o parser da stdlib.
+/// Retorna o IP normalizado (ex: "::1" → "::1") ou um erro descritivo.
 fn validate_ip(ip: &str) -> Result<String, String> {
     let ip = ip.trim();
-
-    // Check for dangerous characters
-    let dangerous_chars = [
-        ';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\0', ' ', '\t',
-    ];
-    for c in dangerous_chars {
-        if ip.contains(c) {
-            return Err("Invalid IP: contains forbidden characters".to_string());
-        }
-    }
-
-    // Basic IPv4 validation
-    if ip.contains('.') {
-        let octets: Vec<&str> = ip.split('.').collect();
-        if octets.len() != 4 {
-            return Err("Invalid IPv4 address".to_string());
-        }
-        for octet in octets {
-            let _num: u8 = octet.parse().map_err(|_| "Invalid IP octet")?;
-        }
-    }
-    // Basic IPv6 validation (simplified)
-    else if ip.contains(':') {
-        if ip.contains("::") {
-            // Allow IPv6 shorthand but basic check
-            if ip.len() > 45 {
-                return Err("Invalid IPv6 address".to_string());
-            }
-        }
-    } else {
-        return Err("Invalid IP address format".to_string());
-    }
-
-    Ok(ip.to_string())
+    ip.parse::<std::net::IpAddr>()
+        .map(|addr| addr.to_string())
+        .map_err(|_| format!("Endereço IP inválido: '{}'", ip))
 }
+
 
 #[derive(Clone)]
 pub enum FirewallBackend {

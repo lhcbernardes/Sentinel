@@ -1,5 +1,6 @@
 pub mod api;
 pub mod api_routes;
+pub mod auth;
 pub mod routes;
 
 pub use api_routes::create_api_router;

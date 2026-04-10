@@ -1,17 +1,57 @@
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use parking_lot::RwLock;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const JWT_SECRET: &[u8] = b"sentinel_rs_secret_key_2024_secure_change_in_production";
-const JWT_EXPIRY_SECS: u64 = 86400; // 24 hours
+/// 24 horas de validade por token
+const JWT_EXPIRY_SECS: u64 = 86400;
+/// Máximo de tentativas de login antes do lockout
+const MAX_LOGIN_ATTEMPTS: u32 = 10;
+/// Janela de lockout em segundos (5 minutos)
+const LOCKOUT_WINDOW_SECS: u64 = 300;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub username: String,
-    pub password_hash: String,
-    pub role: UserRole,
-    pub created_at: i64,
+// ─── utilidades ────────────────────────────────────────────────────────────
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Carrega o segredo JWT da variável de ambiente `SENTINEL_JWT_SECRET`.
+/// Se não definida ou muito curta, gera um segredo aleatório e emite um warning —
+/// nesse caso todos os tokens são invalidados ao reiniciar o serviço.
+fn get_jwt_secret() -> Vec<u8> {
+    match std::env::var("SENTINEL_JWT_SECRET") {
+        Ok(secret) if secret.len() >= 32 => {
+            tracing::info!("JWT secret carregado de SENTINEL_JWT_SECRET.");
+            secret.into_bytes()
+        }
+        Ok(_) => {
+            tracing::warn!(
+                "SENTINEL_JWT_SECRET é muito curto (mínimo 32 caracteres). \
+                 Gerando segredo aleatório — configure esta variável para persistir sessões."
+            );
+            generate_random_secret()
+        }
+        Err(_) => {
+            tracing::warn!(
+                "SENTINEL_JWT_SECRET não definida. Usando segredo aleatório — \
+                 tokens serão invalidados ao reiniciar. Defina SENTINEL_JWT_SECRET em produção."
+            );
+            generate_random_secret()
+        }
+    }
+}
+
+fn generate_random_secret() -> Vec<u8> {
+    rand::thread_rng()
+        .sample_iter(rand::distributions::Standard)
+        .take(64)
+        .collect()
 }
 
 fn hash_password(password: &str) -> String {
@@ -38,135 +78,264 @@ fn verify_password(password: &str, hash: &str) -> bool {
     }
 }
 
+// ─── tipos públicos ─────────────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserRole {
     Admin,
     Viewer,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl UserRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UserRole::Admin => "admin",
+            UserRole::Viewer => "viewer",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub username: String,
+    pub password_hash: String,
+    pub role: UserRole,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
-    pub expires_at: i64,
+    pub expires_at: u64,
     pub user: UserInfo,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
     pub username: String,
     pub role: String,
 }
 
+/// Claims armazenadas dentro do JWT.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtPayload {
     pub sub: String,
     pub role: String,
-    pub exp: i64,
-    pub iat: i64,
+    pub exp: usize,
+    pub iat: usize,
 }
+
+// ─── rate limiting ──────────────────────────────────────────────────────────
+
+struct LoginAttemptRecord {
+    count: u32,
+    window_start: u64,
+}
+
+// ─── AuthManager ────────────────────────────────────────────────────────────
 
 pub struct AuthManager {
     users: RwLock<HashMap<String, User>>,
+    /// Mapa de tokens ativos: token → claims.
+    /// Usado para implementar logout real (revogação de token).
     sessions: RwLock<HashMap<String, JwtPayload>>,
+    /// Controle de rate limiting por username.
+    login_attempts: RwLock<HashMap<String, LoginAttemptRecord>>,
     jwt_secret: Vec<u8>,
 }
 
 impl AuthManager {
     pub fn new() -> Self {
+        let jwt_secret = get_jwt_secret();
+
+        // Senha padrão configurável via env; warning se usar o padrão fraco.
+        let default_password = std::env::var("SENTINEL_ADMIN_PASSWORD").unwrap_or_else(|_| {
+            tracing::warn!(
+                "SENTINEL_ADMIN_PASSWORD não definida. Usando senha padrão 'admin123'. \
+                 ALTERE ESTA SENHA IMEDIATAMENTE em produção!"
+            );
+            "admin123".to_string()
+        });
+
+        let default_password_hash = hash_password(&default_password);
+
         let mut users = HashMap::new();
-
-        // Default admin user - CHANGE PASSWORD IN PRODUCTION!
-        // Default password: admin123 (hashed with Argon2)
-        let default_password_hash = hash_password("admin123");
-
         users.insert(
             "admin".to_string(),
             User {
                 username: "admin".to_string(),
                 password_hash: default_password_hash,
                 role: UserRole::Admin,
-                created_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64,
+                created_at: now_secs() as i64,
             },
         );
 
         Self {
             users: RwLock::new(users),
             sessions: RwLock::new(HashMap::new()),
-            jwt_secret: JWT_SECRET.to_vec(),
+            login_attempts: RwLock::new(HashMap::new()),
+            jwt_secret,
         }
     }
 
-    pub fn login(&self, request: LoginRequest) -> Option<LoginResponse> {
-        let users = self.users.read();
+    // ── rate limiting ──────────────────────────────────────────────────────
 
-        let user = users.get(&request.username)?;
+    fn check_rate_limit(&self, username: &str) -> Result<(), String> {
+        let now = now_secs();
+        let mut attempts = self.login_attempts.write();
+        let entry = attempts
+            .entry(username.to_string())
+            .or_insert(LoginAttemptRecord {
+                count: 0,
+                window_start: now,
+            });
 
-        if !verify_password(&request.password, &user.password_hash) {
-            return None;
+        // Reinicia janela se expirou
+        if now.saturating_sub(entry.window_start) > LOCKOUT_WINDOW_SECS {
+            entry.count = 0;
+            entry.window_start = now;
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        if entry.count >= MAX_LOGIN_ATTEMPTS {
+            let remaining =
+                LOCKOUT_WINDOW_SECS.saturating_sub(now.saturating_sub(entry.window_start));
+            return Err(format!(
+                "Muitas tentativas de login. Tente novamente em {} segundos.",
+                remaining
+            ));
+        }
 
-        let expiry = now + JWT_EXPIRY_SECS as i64;
+        Ok(())
+    }
+
+    fn record_failed_attempt(&self, username: &str) {
+        let now = now_secs();
+        let mut attempts = self.login_attempts.write();
+        let entry = attempts
+            .entry(username.to_string())
+            .or_insert(LoginAttemptRecord {
+                count: 0,
+                window_start: now,
+            });
+        entry.count += 1;
+    }
+
+    fn clear_attempts(&self, username: &str) {
+        self.login_attempts.write().remove(username);
+    }
+
+    // ── login / logout ─────────────────────────────────────────────────────
+
+    /// Autentica um usuário. Retorna `Err` com mensagem legível em caso de
+    /// credenciais inválidas ou rate limit atingido.
+    pub fn login(&self, request: LoginRequest) -> Result<LoginResponse, String> {
+        self.check_rate_limit(&request.username)?;
+
+        let users = self.users.read();
+        let user = users.get(&request.username);
+
+        // Realiza a verificação sempre (mesmo se usuário não existe) para
+        // evitar timing attacks que permitiriam enumerar usuários válidos.
+        let is_valid = match user {
+            Some(u) => verify_password(&request.password, &u.password_hash),
+            None => {
+                // Executa trabalho fictício para equalizar o tempo de resposta
+                let _ = verify_password(
+                    &request.password,
+                    "$argon2id$v=19$m=19456,t=2,p=1$dummysaltdummysalt$dummyhash000000000000000000000000000000000",
+                );
+                false
+            }
+        };
+
+        if !is_valid {
+            drop(users);
+            self.record_failed_attempt(&request.username);
+            // Mensagem genérica para não revelar qual campo está errado
+            return Err("Credenciais inválidas".to_string());
+        }
+
+        let user = user.unwrap();
+        let role_str = user.role.as_str().to_string();
+        let username = user.username.clone();
+        drop(users);
+
+        self.clear_attempts(&request.username);
+        self.issue_token(username, role_str)
+    }
+
+    /// Cria um novo par (token, LoginResponse) para o usuário/role informados.
+    /// Chamado internamente por `login` e `renew_token`.
+    fn issue_token(&self, username: String, role: String) -> Result<LoginResponse, String> {
+        let now = now_secs() as usize;
+        let expiry = now + JWT_EXPIRY_SECS as usize;
 
         let payload = JwtPayload {
-            sub: user.username.clone(),
-            role: match user.role {
-                UserRole::Admin => "admin",
-                UserRole::Viewer => "viewer",
-            }
-            .to_string(),
+            sub: username.clone(),
+            role: role.clone(),
             exp: expiry,
             iat: now,
         };
 
-        let token = self.encode_jwt(&payload);
+        let token = encode(
+            &Header::default(), // HS256
+            &payload,
+            &EncodingKey::from_secret(&self.jwt_secret),
+        )
+        .map_err(|e| format!("Falha ao gerar token: {}", e))?;
 
-        self.sessions.write().insert(token.clone(), payload.clone());
+        self.sessions
+            .write()
+            .insert(token.clone(), payload);
 
-        Some(LoginResponse {
+        Ok(LoginResponse {
             token,
-            expires_at: expiry,
-            user: UserInfo {
-                username: user.username.clone(),
-                role: match user.role {
-                    UserRole::Admin => "admin".to_string(),
-                    UserRole::Viewer => "viewer".to_string(),
-                },
-            },
+            expires_at: expiry as u64,
+            user: UserInfo { username, role },
         })
     }
 
+    /// Verifica um token: checa se está na lista de sessões ativas E valida
+    /// assinatura + expiração via `jsonwebtoken`.
     pub fn verify_token(&self, token: &str) -> Option<JwtPayload> {
-        let payload = self.decode_jwt(token)?;
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        if payload.exp < now {
-            self.sessions.write().remove(token);
+        // Verificação rápida: token precisa estar na lista de sessões ativas.
+        // Isso garante que tokens revogados via logout não passem.
+        if !self.sessions.read().contains_key(token) {
             return None;
         }
 
-        Some(payload)
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.validate_exp = true;
+
+        decode::<JwtPayload>(
+            token,
+            &DecodingKey::from_secret(&self.jwt_secret),
+            &validation,
+        )
+        .ok()
+        .map(|data| data.claims)
     }
 
+    /// Invalida o token (logout real — o token não poderá mais ser usado).
     pub fn logout(&self, token: &str) {
         self.sessions.write().remove(token);
+    }
+
+    /// Renova um token válido sem exigir senha novamente.
+    /// Revoga o token antigo e emite um novo com expiração renovada.
+    pub fn renew_token(&self, token: &str) -> Option<LoginResponse> {
+        let payload = self.verify_token(token)?;
+
+        // Revoga o token atual antes de emitir o novo
+        self.sessions.write().remove(token);
+
+        self.issue_token(payload.sub, payload.role).ok()
     }
 
     pub fn is_admin(&self, token: &str) -> bool {
@@ -174,6 +343,8 @@ impl AuthManager {
             .map(|p| p.role == "admin")
             .unwrap_or(false)
     }
+
+    // ── gerenciamento de usuários ──────────────────────────────────────────
 
     pub fn add_user(&self, username: String, password: String, role: UserRole) -> bool {
         let mut users = self.users.write();
@@ -184,7 +355,7 @@ impl AuthManager {
             username: username.clone(),
             password_hash: hash_password(&password),
             role,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: now_secs() as i64,
         };
         users.insert(username, user);
         true
@@ -196,17 +367,23 @@ impl AuthManager {
             .values()
             .map(|u| UserInfo {
                 username: u.username.clone(),
-                role: match u.role {
-                    UserRole::Admin => "admin".to_string(),
-                    UserRole::Viewer => "viewer".to_string(),
-                },
+                role: u.role.as_str().to_string(),
             })
             .collect()
     }
 
+    /// Verifica se `password` corresponde à senha atual do usuário (para
+    /// exigir confirmação antes de troca de senha).
+    pub fn verify_current_password(&self, username: &str, password: &str) -> bool {
+        self.users
+            .read()
+            .get(username)
+            .map(|u| verify_password(password, &u.password_hash))
+            .unwrap_or(false)
+    }
+
     pub fn change_password(&self, username: &str, new_password: &str) -> bool {
         let mut users = self.users.write();
-
         if let Some(user) = users.get_mut(username) {
             user.password_hash = hash_password(new_password);
             true
@@ -214,68 +391,10 @@ impl AuthManager {
             false
         }
     }
-
-    fn encode_jwt(&self, payload: &JwtPayload) -> String {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
-        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
-
-        let claims = serde_json::to_string(payload).unwrap();
-        let payload_encoded = URL_SAFE_NO_PAD.encode(claims.as_bytes());
-
-        let signature = self.sign(format!("{}.{}", header, payload_encoded));
-
-        format!("{}.{}.{}", header, payload_encoded, signature)
-    }
-
-    fn decode_jwt(&self, token: &str) -> Option<JwtPayload> {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
-        let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
-            return None;
-        }
-
-        let expected_signature = self.sign(format!("{}.{}", parts[0], parts[1]));
-
-        if expected_signature != parts[2] {
-            return None;
-        }
-
-        match URL_SAFE_NO_PAD.decode(parts[1]) {
-            Ok(payload_bytes) => match String::from_utf8(payload_bytes) {
-                Ok(payload_str) => serde_json::from_str(&payload_str).ok(),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        }
-    }
-
-    fn sign(&self, data: String) -> String {
-        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
-        let mut key = self.jwt_secret.clone();
-        key.extend(data.as_bytes());
-
-        let hash = sha256::digest(String::from_utf8_lossy(&key).as_ref());
-        URL_SAFE_NO_PAD.encode(hash.as_bytes())
-    }
 }
 
 impl Default for AuthManager {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Simple SHA-256 implementation for JWT signing
-mod sha256 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    pub fn digest(input: &str) -> String {
-        let mut hasher = DefaultHasher::new();
-        input.hash(&mut hasher);
-        format!("{:016x}{:016x}", hasher.finish(), hasher.finish())
     }
 }

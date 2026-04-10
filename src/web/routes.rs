@@ -17,6 +17,10 @@ use crate::devices::Device;
 use crate::sniffer::packet::PacketInfo;
 use crate::AppState;
 
+use super::auth::require_admin;
+
+// ─── templates ───────────────────────────────────────────────────────────────
+
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct IndexTemplate;
@@ -58,217 +62,30 @@ pub async fn packets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Html(PacketsTemplate { packets }.render().unwrap_or_default())
 }
 
+#[derive(Template)]
+#[template(path = "blocking.html")]
+pub struct BlockingTemplate {
+    pub blocklist_stats: crate::blocking::BlocklistStats,
+    pub dns_stats: crate::blocking::DnsStats,
+    pub firewall_stats: crate::blocking::FirewallStats,
+    pub blocked_ips: Vec<String>,
+}
+
 pub async fn blocking(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let blocklist_stats = state.blocklist.stats();
     let blocked_ips = state.firewall.get_blocked_ips();
     let dns_stats = state.dns_sinkhole.stats();
     let firewall_stats = state.firewall.stats();
 
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blocking - Sentinel-RS</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
-            <h1 class="text-2xl font-bold text-cyan-400">Sentinel-RS</h1>
-            <div class="flex items-center space-x-4">
-                <a href="/" class="text-sm text-gray-300 hover:text-white">Dashboard</a>
-                <a href="/blocking" class="text-sm text-red-400 hover:text-red-300">Blocking</a>
-            </div>
-        </div>
-    </nav>
-
-    <main class="max-w-7xl mx-auto px-6 py-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm">Trackers Blocked</div>
-                <div class="text-2xl font-bold text-red-400">{}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm">Malware Blocked</div>
-                <div class="text-2xl font-bold text-orange-400">{}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm">Attackers Blocked</div>
-                <div class="text-2xl font-bold text-yellow-400">{}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm">Custom Rules</div>
-                <div class="text-2xl font-bold text-cyan-400">{}</div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-gray-800 rounded-lg border border-gray-700">
-                <div class="px-4 py-3 border-b border-gray-700">
-                    <h2 class="font-semibold text-lg">DNS Sinkhole</h2>
-                </div>
-                <div class="p-4">
-                    <div class="flex justify-between items-center mb-4">
-                        <span class="text-gray-400">Status</span>
-                        <span class="px-2 py-1 rounded text-xs font-medium bg-green-900 text-green-300">Active</span>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <div class="text-gray-500 text-sm">Total Queries</div>
-                            <div class="text-xl font-bold">{}</div>
-                        </div>
-                        <div>
-                            <div class="text-gray-500 text-sm">Blocked</div>
-                            <div class="text-xl font-bold text-red-400">{}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-gray-800 rounded-lg border border-gray-700">
-                <div class="px-4 py-3 border-b border-gray-700">
-                    <h2 class="font-semibold text-lg">Firewall ({})</h2>
-                </div>
-                <div class="p-4">
-                    <div class="flex justify-between items-center mb-4">
-                        <span class="text-gray-400">Status</span>
-                        <span class="px-2 py-1 rounded text-xs font-medium bg-green-900 text-green-300">Active</span>
-                    </div>
-                    <div class="mb-4">
-                        <div class="text-gray-500 text-sm">Backend</div>
-                        <div class="font-mono text-sm">{}</div>
-                    </div>
-                    <div>
-                        <div class="text-gray-500 text-sm">Blocked IPs</div>
-                        <div class="text-xl font-bold">{}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg">Blocked IP Addresses</h2>
-            </div>
-            <div class="p-4">
-                {}
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg">Add Custom Block</h2>
-            </div>
-            <div class="p-4">
-                <div class="flex gap-2">
-                    <input type="text" id="customBlockInput" placeholder="Domain or IP address" class="flex-1 bg-gray-700 text-white px-3 py-2 rounded">
-                    <button onclick="addCustomBlock()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">Block</button>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700 flex justify-between items-center">
-                <h2 class="font-semibold text-lg">Update Blocklists</h2>
-                <button onclick="updateBlocklists()" id="updateBtn" class="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded">Update Now</button>
-            </div>
-            <div class="p-4">
-                <p class="text-gray-400 text-sm mb-4">Download latest blocklists from fabriziosalmi/blacklists repository</p>
-                <div id="updateStatus" class="text-sm"></div>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg">Network Setup Guide</h2>
-            </div>
-            <div class="p-4 space-y-4">
-                <div class="bg-gray-750 p-3 rounded">
-                    <h3 class="font-medium text-cyan-400 mb-2">Option 1: Router DNS (Recommended)</h3>
-                    <p class="text-gray-400 text-sm">Configure your router's DNS to point to this machine's IP address. All devices will use it automatically.</p>
-                    <div class="mt-2 font-mono text-sm text-gray-300">Example: Set DNS to 192.168.1.x (this machine's IP)</div>
-                </div>
-                <div class="bg-gray-750 p-3 rounded">
-                    <h3 class="font-medium text-cyan-400 mb-2">Option 2: Individual Device DNS</h3>
-                    <p class="text-gray-400 text-sm">Manually set DNS on each device to this machine's IP.</p>
-                    <div class="mt-2 text-sm text-gray-500">Windows: Network Settings → DNS | macOS: Network → DNS | Linux: /etc/resolv.conf</div>
-                </div>
-                <div class="bg-gray-750 p-3 rounded">
-                    <h3 class="font-medium text-cyan-400 mb-2">Option 3: Enable DNS Sinkhole</h3>
-                    <p class="text-gray-400 text-sm">Start the DNS server on this machine:</p>
-                    <div class="mt-2 font-mono text-sm text-yellow-400">DNS_ENABLED=true DNS_PORT=53 cargo run</div>
-                    <div class="mt-2 text-xs text-gray-500">Requires sudo/root for port 53</div>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <script>
-        function addCustomBlock() {{
-            const input = document.getElementById('customBlockInput');
-            const value = input.value.trim();
-            if (!value) return;
-            fetch('/api/add-block', {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{entry: value}})
-            }}).then(() => {{
-                input.value = '';
-                location.reload();
-            }});
-        }}
-
-        function updateBlocklists() {{
-            const btn = document.getElementById('updateBtn');
-            const status = document.getElementById('updateStatus');
-            btn.disabled = true;
-            btn.textContent = 'Updating...';
-            status.innerHTML = '<span class="text-yellow-400">Downloading blocklists...</span>';
-            
-            fetch('/api/update-blocklists', {{ method: 'POST' }})
-                .then(res => res.json())
-                .then(data => {{
-                    btn.disabled = false;
-                    btn.textContent = 'Update Now';
-                    if (data.status === 'ok') {{
-                        status.innerHTML = '<span class="text-green-400">Updated! Trackers: ' + data.trackers + ', Malware: ' + data.malware + ', Attackers: ' + data.attackers + '</span>';
-                        setTimeout(() => location.reload(), 2000);
-                    }} else {{
-                        status.innerHTML = '<span class="text-red-400">Error: ' + data.message + '</span>';
-                    }}
-                }})
-                .catch(err => {{
-                    btn.disabled = false;
-                    btn.textContent = 'Update Now';
-                    status.innerHTML = '<span class="text-red-400">Error: ' + err + '</span>';
-                }});
-        }}
-    </script>
-</body>
-</html>"#,
-        blocklist_stats.trackers,
-        blocklist_stats.malware,
-        blocklist_stats.attackers,
-        blocklist_stats.custom,
-        dns_stats.queries,
-        dns_stats.blocked,
-        firewall_stats.backend,
-        firewall_stats.backend,
-        firewall_stats.blocked_count,
-        if blocked_ips.is_empty() {
-            "<div class=\"text-gray-500 text-center\">No IPs blocked</div>".to_string()
-        } else {
-            blocked_ips.iter().map(|ip| format!(
-                "<div class=\"flex justify-between items-center p-2 bg-gray-750 rounded\"><span class=\"font-mono text-sm\">{}</span></div>", ip
-            )).collect::<Vec<_>>().join("\n")
-        }
-    );
-
-    Html(html)
+    Html(BlockingTemplate {
+        blocklist_stats,
+        dns_stats,
+        firewall_stats,
+        blocked_ips,
+    }.render().unwrap_or_default())
 }
+
+// ─── request / response types ─────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
 pub struct BlockRequest {
@@ -286,26 +103,42 @@ pub struct ConfigUpdateRequest {
     value: serde_json::Value,
 }
 
+// ─── API handlers (protegidos — exigem admin) ─────────────────────────────────
+
 pub async fn unblock_ip(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     axum::Json(req): axum::Json<BlockRequest>,
 ) -> impl IntoResponse {
-    let _ = state.firewall.unblock_ip(&req.ip);
-    "OK"
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
+    match state.firewall.unblock_ip(&req.ip) {
+        Ok(_) => axum::Json(serde_json::json!({"status": "ok"})).into_response(),
+        Err(e) => axum::Json(serde_json::json!({"status": "error", "message": e})).into_response(),
+    }
 }
 
 pub async fn add_custom_block(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     axum::Json(req): axum::Json<CustomBlockRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     state.blocklist.add_custom_block(req.entry);
-    "OK"
+    axum::Json(serde_json::json!({"status": "ok"})).into_response()
 }
 
 pub async fn update_config(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     axum::Json(req): axum::Json<ConfigUpdateRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     let mut config = state.blocklist.get_config();
     match req.key.as_str() {
         "block_trackers" => config.block_trackers = req.value.as_bool().unwrap_or(false),
@@ -320,12 +153,17 @@ pub async fn update_config(
         _ => {}
     }
     state.blocklist.update_config(config);
-    "OK"
+    axum::Json(serde_json::json!({"status": "ok"})).into_response()
 }
 
-pub async fn update_blocklists(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn update_blocklists(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
     let updater = BlocklistUpdater::new(state.blocklist.clone());
-
     match updater.update_all().await {
         Ok(_) => {
             let stats = state.blocklist.stats();
@@ -336,14 +174,18 @@ pub async fn update_blocklists(State(state): State<Arc<AppState>>) -> impl IntoR
                 "attackers": stats.attackers
             })
             .to_string()
+            .into_response()
         }
         Err(e) => serde_json::json!({
             "status": "error",
             "message": e
         })
-        .to_string(),
+        .to_string()
+        .into_response(),
     }
 }
+
+// ─── SSE event stream ─────────────────────────────────────────────────────────
 
 pub async fn event_stream(
     State(state): State<Arc<AppState>>,
@@ -373,25 +215,39 @@ pub async fn event_stream(
     Sse::new(stream)
 }
 
+// ─── router ───────────────────────────────────────────────────────────────────
+
 pub fn create_router(state: Arc<AppState>) -> Router {
+    // CORS restrito: usa ALLOWED_ORIGIN env var.
+    // Padrão: localhost:8080 (sem wildcard).
+    let allowed_origin = std::env::var("ALLOWED_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+
+    let cors_origin: axum::http::HeaderValue = allowed_origin
+        .parse()
+        .unwrap_or_else(|_| "http://localhost:8080".parse().unwrap());
+
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(cors_origin)
         .allow_methods(vec![Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION])
-        .allow_credentials(false);
+        .allow_credentials(true);
 
     Router::new()
+        // Páginas HTML públicas (shells de UI, sem dados críticos)
         .route("/", get(index))
         .route("/devices", get(devices))
         .route("/alerts", get(alerts))
         .route("/packets", get(packets))
         .route("/blocking", get(blocking))
+        // SSE — público por limitação do EventSource (sem custom headers)
         .route("/events", get(event_stream))
+        // APIs protegidas (exigem Bearer token via middleware + admin check nos handlers)
         .route("/api/unblock-ip", post(unblock_ip))
         .route("/api/add-block", post(add_custom_block))
         .route("/api/update-config", post(update_config))
         .route("/api/update-blocklists", post(update_blocklists))
-        // API v1 routes
+        // API v1
         .route("/api/v1/status", get(api_v1_status))
         .route("/api/v1/health", get(api_v1_health))
         .route("/api/v1/login", post(api_v1_login))
@@ -403,19 +259,30 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/blocklist/ips", get(api_v1_blocked_ips))
         .route("/api/v1/firewall/status", get(api_v1_firewall_status))
         .route("/metrics", get(api_v1_metrics))
+        // Aplica middleware de auth a todas as rotas (as públicas são bypassed dentro do middleware)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            super::auth::auth_middleware,
+        ))
         .layer(cors)
         .with_state(state)
 }
 
-// API v1 handlers
+// ─── API v1 handlers ──────────────────────────────────────────────────────────
+
 use axum::response::Json;
 use serde_json::json;
 
 async fn api_v1_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let stats = state.stats.get_stats();
-    Json(
-        json!({ "success": true, "data": { "version": "1.0.0", "packets": stats.packets, "devices": state.device_manager.get_all().len() } }),
-    )
+    Json(json!({
+        "success": true,
+        "data": {
+            "version": env!("CARGO_PKG_VERSION"),
+            "packets": stats.packets,
+            "devices": state.device_manager.get_all().len()
+        }
+    }))
 }
 
 async fn api_v1_health() -> Json<serde_json::Value> {
@@ -425,10 +292,18 @@ async fn api_v1_health() -> Json<serde_json::Value> {
 async fn api_v1_login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<crate::auth::LoginRequest>,
-) -> Json<serde_json::Value> {
+) -> impl IntoResponse {
     match state.auth.login(payload) {
-        Some(r) => Json(json!({ "success": true, "data": r })),
-        None => Json(json!({ "success": false, "error": "Invalid credentials" })),
+        Ok(r) => (
+            axum::http::StatusCode::OK,
+            Json(json!({ "success": true, "data": r })),
+        )
+            .into_response(),
+        Err(e) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(json!({ "success": false, "error": e })),
+        )
+            .into_response(),
     }
 }
 
@@ -457,9 +332,14 @@ async fn api_v1_alerts(State(state): State<Arc<AppState>>) -> Json<serde_json::V
 
 async fn api_v1_blocklist_stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let stats = state.blocklist.stats();
-    Json(
-        json!({ "success": true, "data": { "trackers": stats.trackers, "malware": stats.malware, "custom": stats.custom } }),
-    )
+    Json(json!({
+        "success": true,
+        "data": {
+            "trackers": stats.trackers,
+            "malware": stats.malware,
+            "custom": stats.custom
+        }
+    }))
 }
 
 async fn api_v1_blocked_ips(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -468,12 +348,19 @@ async fn api_v1_blocked_ips(State(state): State<Arc<AppState>>) -> Json<serde_js
 
 async fn api_v1_firewall_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let stats = state.firewall.stats();
-    Json(
-        json!({ "success": true, "data": { "enabled": stats.enabled, "backend": stats.backend, "blocked_count": stats.blocked_count } }),
-    )
+    Json(json!({
+        "success": true,
+        "data": {
+            "enabled": stats.enabled,
+            "backend": stats.backend,
+            "blocked_count": stats.blocked_count
+        }
+    }))
 }
 
-async fn api_v1_metrics(State(state): State<Arc<AppState>>) -> impl axum::response::IntoResponse {
+async fn api_v1_metrics(
+    State(state): State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
     state.metrics.record_request("metrics");
     (axum::http::StatusCode::OK, state.metrics.get_metrics())
 }

@@ -1,326 +1,231 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sentinel-RS - Network Security Monitor</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script>
-        const i18n = {
-            locale: localStorage.getItem('locale') || 'en',
-            translations: {
-                en: {
-                    dashboard: 'Dashboard',
-                    blocking: 'Blocking',
-                    network_security_monitor: 'Network Security Monitor',
-                    live: 'Live',
-                    disconnected: 'Disconnected',
-                    trackers_blocked: 'Trackers Blocked',
-                    malware_blocked: 'Malware Blocked',
-                    attackers_blocked: 'Attackers Blocked',
-                    custom_rules: 'Custom Rules',
-                    dns_sinkhole: 'DNS Sinkhole',
-                    status: 'Status',
-                    active: 'Active',
-                    disabled: 'Disabled',
-                    total_queries: 'Total Queries',
-                    blocked: 'Blocked',
-                    firewall: 'Firewall',
-                    backend: 'Backend',
-                    blocked_ips: 'Blocked IP Addresses',
-                    no_ips_blocked: 'No IPs blocked',
-                    block_configuration: 'Block Configuration',
-                    block_trackers: 'Block Trackers',
-                    block_malware: 'Block Malware',
-                    block_attackers: 'Block Attackers',
-                    auto_block_port_scanners: 'Auto-block Port Scanners',
-                    port_scan_threshold: 'Port Scan Threshold',
-                    add_custom_block: 'Add Custom Block',
-                    domain_or_ip: 'Domain or IP address',
-                    block_btn: 'Block',
-                    unblock: 'Unblock'
-                },
-                pt: {
-                    dashboard: 'Painel',
-                    blocking: 'Bloqueio',
-                    network_security_monitor: 'Monitor de Segurança de Rede',
-                    live: 'Ao Vivo',
-                    disconnected: 'Desconectado',
-                    trackers_blocked: 'Rastreadores Bloqueados',
-                    malware_blocked: 'Malware Bloqueado',
-                    attackers_blocked: 'Atacantes Bloqueados',
-                    custom_rules: 'Regras Personalizadas',
-                    dns_sinkhole: 'DNS Sinkhole',
-                    status: 'Status',
-                    active: 'Ativo',
-                    disabled: 'Desativado',
-                    total_queries: 'Total de Consultas',
-                    blocked: 'Bloqueado',
-                    firewall: 'Firewall',
-                    backend: 'Backend',
-                    blocked_ips: 'Endereços IP Bloqueados',
-                    no_ips_blocked: 'Nenhum IP bloqueado',
-                    block_configuration: 'Configuração de Bloqueio',
-                    block_trackers: 'Bloquear Rastreadores',
-                    block_malware: 'Bloquear Malware',
-                    block_attackers: 'Bloquear Atacantes',
-                    auto_block_port_scanners: 'Auto-bloquear Varredores de Porta',
-                    port_scan_threshold: 'Limite de Varredura de Porta',
-                    add_custom_block: 'Adicionar Bloqueio Personalizado',
-                    domain_or_ip: 'Domínio ou endereço IP',
-                    block_btn: 'Bloquear',
-                    unblock: 'Desbloquear'
-                },
-                es: {
-                    dashboard: 'Panel',
-                    blocking: 'Bloqueo',
-                    network_security_monitor: 'Monitor de Seguridad de Red',
-                    live: 'En Vivo',
-                    disconnected: 'Desconectado',
-                    trackers_blocked: 'Rastreadores Bloqueados',
-                    malware_blocked: 'Malware Bloqueado',
-                    attackers_blocked: 'Atacantes Bloqueados',
-                    custom_rules: 'Reglas Personalizadas',
-                    dns_sinkhole: 'DNS Sinkhole',
-                    status: 'Estado',
-                    active: 'Activo',
-                    disabled: 'Desactivado',
-                    total_queries: 'Total de Consultas',
-                    blocked: 'Bloqueado',
-                    firewall: 'Cortafuegos',
-                    backend: 'Backend',
-                    blocked_ips: 'Direcciones IP Bloqueadas',
-                    no_ips_blocked: 'Sin IPs bloqueados',
-                    block_configuration: 'Configuración de Bloqueo',
-                    block_trackers: 'Bloquear Rastreadores',
-                    block_malware: 'Bloquear Malware',
-                    block_attackers: 'Bloquear Atacantes',
-                    auto_block_port_scanners: 'Auto-bloquear Escáneres de Puertos',
-                    port_scan_threshold: 'Umbral de Escaneo de Puertos',
-                    add_custom_block: 'Agregar Bloqueo Personalizado',
-                    domain_or_ip: 'Dominio o dirección IP',
-                    block_btn: 'Bloquear',
-                    unblock: 'Desbloquear'
+{% extends "base.html" %}
+
+{% block title %}Blocking - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+    <!-- Stat Cards -->
+    <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+        <div class="absolute inset-0 bg-gradient-to-br from-cyber-danger/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        <div class="flex flex-col relative z-10">
+            <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="trackers_blocked">Trackers Blocked</div>
+            <div class="text-3xl font-bold tracking-tight text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]">{{ blocklist_stats.trackers }}</div>
+        </div>
+    </div>
+    <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+        <div class="absolute inset-0 bg-gradient-to-br from-cyber-warn/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        <div class="flex flex-col relative z-10">
+            <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="malware_blocked">Malware Blocked</div>
+            <div class="text-3xl font-bold tracking-tight text-cyber-warn drop-shadow-[0_0_12px_rgba(245,158,11,0.4)]">{{ blocklist_stats.malware }}</div>
+        </div>
+    </div>
+    <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+        <div class="absolute inset-0 bg-gradient-to-br from-cyber-danger/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        <div class="flex flex-col relative z-10">
+            <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="attackers_blocked">Attackers Blocked</div>
+            <div class="text-3xl font-bold tracking-tight text-cyber-danger drop-shadow-[0_0_12px_rgba(239,68,68,0.4)]">{{ blocklist_stats.attackers }}</div>
+        </div>
+    </div>
+    <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+        <div class="absolute inset-0 bg-gradient-to-br from-cyber-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+        <div class="flex flex-col relative z-10">
+            <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="custom_rules">Custom Rules</div>
+            <div class="text-3xl font-bold tracking-tight text-cyber-primary drop-shadow-[0_0_12px_rgba(6,182,212,0.4)]">{{ blocklist_stats.custom }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="glass-panel rounded-xl flex flex-col">
+        <div class="px-5 py-4 border-b border-gray-700/50 bg-gray-900/30">
+            <h2 class="font-semibold text-lg text-gray-100" data-i18n="dns_sinkhole">DNS Sinkhole</h2>
+        </div>
+        <div class="p-5">
+            <div class="flex justify-between items-center mb-6">
+                <span class="text-gray-400 font-medium text-sm" data-i18n="status">Status</span>
+                <span class="px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-cyber-success/20 text-cyber-success border border-cyber-success/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]" data-i18n="active">Active</span>
+            </div>
+            <div class="grid grid-cols-2 gap-6">
+                <div class="bg-gray-800/40 p-4 rounded-lg border border-gray-700/30">
+                    <div class="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1" data-i18n="total_queries">Total Queries</div>
+                    <div class="text-2xl font-bold text-gray-100">{{ dns_stats.queries }}</div>
+                </div>
+                <div class="bg-cyber-danger/10 p-4 rounded-lg border border-cyber-danger/20">
+                    <div class="text-cyber-danger text-xs font-semibold uppercase tracking-wider mb-1 opacity-80" data-i18n="blocked">Blocked</div>
+                    <div class="text-2xl font-bold text-cyber-danger drop-shadow-[0_0_8px_rgba(239,68,68,0.5)]">{{ dns_stats.blocked }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl flex flex-col">
+        <div class="px-5 py-4 border-b border-gray-700/50 bg-gray-900/30">
+            <h2 class="font-semibold text-lg text-gray-100" data-i18n="firewall">Firewall</h2>
+        </div>
+        <div class="p-5">
+            <div class="flex justify-between items-center mb-6">
+                <span class="text-gray-400 font-medium text-sm" data-i18n="status">Status</span>
+                <span class="px-3 py-1 rounded text-xs font-bold uppercase tracking-wider {% if firewall_stats.enabled %}bg-cyber-success/20 text-cyber-success border-cyber-success/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]{% else %}bg-cyber-danger/20 text-cyber-danger border-cyber-danger/30 shadow-[0_0_10px_rgba(239,68,68,0.2)]{% endif %} border">
+                    {% if firewall_stats.enabled %}<span data-i18n="active">Active</span>{% else %}<span data-i18n="disabled">Disabled</span>{% endif %}
+                </span>
+            </div>
+            <div class="grid grid-cols-2 gap-6">
+                <div class="bg-gray-800/40 p-4 rounded-lg border border-gray-700/30">
+                    <div class="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1" data-i18n="backend">Backend</div>
+                    <div class="text-lg font-mono text-gray-200 mt-1 uppercase">{{ firewall_stats.backend }}</div>
+                </div>
+                <div class="bg-cyber-warn/10 p-4 rounded-lg border border-cyber-warn/20">
+                    <div class="text-cyber-warn text-xs font-semibold uppercase tracking-wider mb-1 opacity-80" data-i18n="blocked_ips">Blocked IPs</div>
+                    <div class="text-2xl font-bold text-cyber-warn drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]">{{ firewall_stats.blocked_count }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <div class="glass-panel rounded-xl border border-cyber-danger/20 max-h-[400px] flex flex-col">
+        <div class="px-5 py-4 border-b border-cyber-danger/20 bg-cyber-danger/5">
+            <h2 class="font-semibold text-lg text-cyber-danger" data-i18n="blocked_ips">Blocked IP Addresses</h2>
+        </div>
+        <div class="p-5 flex-1 overflow-y-auto scrollbar-thin">
+            {% if blocked_ips.len() > 0 %}
+            <div class="space-y-3">
+                {% for ip in blocked_ips %}
+                <div class="flex justify-between items-center p-3 bg-gray-900/60 rounded-lg border border-gray-700/50 hover:border-cyber-danger/50 transition-colors group">
+                    <span class="font-mono text-sm text-gray-300">{{ ip }}</span>
+                    <button class="text-xs font-semibold px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-cyber-danger/20 transition-all border border-transparent group-hover:border-cyber-danger/30" onclick="unblockIp('{{ ip }}')" data-i18n="unblock">Unblock</button>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                <svg class="w-12 h-12 mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <div data-i18n="no_ips_blocked">No IPs currently blocked</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="flex flex-col gap-6">
+        <div class="glass-panel rounded-xl flex flex-col">
+            <div class="px-5 py-4 border-b border-gray-700/50">
+                <h2 class="font-semibold text-lg text-gray-100" data-i18n="add_custom_block">Add Custom Block</h2>
+            </div>
+            <div class="p-5">
+                <div class="flex gap-3">
+                    <input type="text" id="customBlockInput" data-i18n-placeholder="domain_or_ip" placeholder="Domain or IP address" class="flex-1 bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-danger/50 focus:ring-1 focus:ring-cyber-danger/50 transition-all placeholder:text-gray-600">
+                    <button onclick="addCustomBlock()" class="bg-cyber-danger/80 hover:bg-cyber-danger text-white font-semibold px-6 py-2.5 rounded-lg shadow-[0_4px_15px_rgba(239,68,68,0.25)] hover:shadow-[0_4px_20px_rgba(239,68,68,0.4)] transition-all" data-i18n="block_btn">Block</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl flex flex-col">
+            <div class="px-5 py-4 border-b border-gray-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <h2 class="font-semibold text-lg text-gray-100" data-i18n="update_blocklists">Update Blocklists</h2>
+                <button onclick="updateBlocklists()" id="updateBtn" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-5 py-2 rounded-lg shadow-[0_4px_15px_rgba(6,182,212,0.25)] hover:shadow-[0_4px_20px_rgba(6,182,212,0.4)] transition-all text-sm">Update Now</button>
+            </div>
+            <div class="p-5 bg-gray-900/10">
+                <p class="text-gray-400 text-sm mb-3">Fetch the latest intelligence and synchronized blocklists from upstream repositories.</p>
+                <div id="updateStatus" class="text-sm font-medium h-5"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="glass-panel rounded-xl mb-8">
+    <div class="px-5 py-4 border-b border-gray-700/50 bg-gray-900/30">
+        <h2 class="font-semibold text-lg text-gray-100" data-i18n="block_configuration">Block Configuration</h2>
+    </div>
+    <div class="p-5 space-y-4">
+        <div class="flex items-center justify-between p-3 hover:bg-white/[0.02] rounded-lg transition-colors border border-transparent hover:border-gray-700/50">
+            <span class="text-gray-300 font-medium" data-i18n="block_trackers">Block Trackers</span>
+            <input type="checkbox" {% if blocklist_stats.config.block_trackers %}checked{% endif %} class="w-5 h-5 accent-cyber-primary cursor-pointer" onchange="updateConfig('block_trackers', this.checked)">
+        </div>
+        <div class="flex items-center justify-between p-3 hover:bg-white/[0.02] rounded-lg transition-colors border border-transparent hover:border-gray-700/50">
+            <span class="text-gray-300 font-medium" data-i18n="block_malware">Block Malware</span>
+            <input type="checkbox" {% if blocklist_stats.config.block_malware %}checked{% endif %} class="w-5 h-5 accent-cyber-primary cursor-pointer" onchange="updateConfig('block_malware', this.checked)">
+        </div>
+        <div class="flex items-center justify-between p-3 hover:bg-white/[0.02] rounded-lg transition-colors border border-transparent hover:border-gray-700/50">
+            <span class="text-gray-300 font-medium" data-i18n="block_attackers">Block Attackers</span>
+            <input type="checkbox" {% if blocklist_stats.config.block_attackers %}checked{% endif %} class="w-5 h-5 accent-cyber-primary cursor-pointer" onchange="updateConfig('block_attackers', this.checked)">
+        </div>
+        <div class="flex items-center justify-between p-3 hover:bg-white/[0.02] rounded-lg transition-colors border border-transparent hover:border-gray-700/50">
+            <span class="text-gray-300 font-medium" data-i18n="auto_block_port_scanners">Auto-block Port Scanners</span>
+            <input type="checkbox" {% if blocklist_stats.config.auto_block_attackers %}checked{% endif %} class="w-5 h-5 accent-cyber-primary cursor-pointer" onchange="updateConfig('auto_block_attackers', this.checked)">
+        </div>
+        <div class="flex items-center justify-between p-3 hover:bg-white/[0.02] rounded-lg transition-colors border border-transparent hover:border-gray-700/50">
+            <span class="text-gray-300 font-medium" data-i18n="port_scan_threshold">Port Scan Threshold <span class="text-xs text-gray-500 ml-2 font-normal">(Hits/min)</span></span>
+            <input type="number" value="{{ blocklist_stats.config.port_scan_threshold }}" class="bg-gray-900 border border-gray-700 text-white px-3 py-1.5 rounded-md w-24 focus:outline-none focus:border-cyber-primary transition-colors text-center" onchange="updateConfig('port_scan_threshold', this.value)">
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const authToken = localStorage.getItem('sentinel_token') || '';
+
+    function unblockIp(ip) {
+        fetch('/api/unblock-ip', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            body: JSON.stringify({ip: ip})
+        }).then(() => location.reload());
+    }
+
+    function addCustomBlock() {
+        const input = document.getElementById('customBlockInput');
+        const value = input.value.trim();
+        if (!value) return;
+        
+        fetch('/api/add-block', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            body: JSON.stringify({entry: value})
+        }).then(() => {
+            input.value = '';
+            location.reload();
+        });
+    }
+
+    function updateConfig(key, value) {
+        fetch('/api/update-config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            body: JSON.stringify({key: key, value: value})
+        });
+    }
+
+    function updateBlocklists() {
+        const btn = document.getElementById('updateBtn');
+        const status = document.getElementById('updateStatus');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="animate-pulse">Updating...</span>';
+        status.innerHTML = '<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-cyber-warn animate-pulse"></span><span class="text-cyber-warn">Downloading blocklists...</span></div>';
+
+        fetch('/api/update-blocklists', {
+            method: 'POST',
+            headers: {'Authorization': 'Bearer ' + authToken}
+        })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.textContent = 'Update Now';
+                if (data.status === 'ok') {
+                    status.innerHTML = '<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-cyber-success shadow-[0_0_8px_#10b981]"></span><span class="text-cyber-success">Updated! Trackers: ' + data.trackers + ', Malware: ' + data.malware + ', Attackers: ' + data.attackers + '</span></div>';
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    status.innerHTML = '<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-cyber-danger shadow-[0_0_8px_#ef4444]"></span><span class="text-cyber-danger">Error: ' + data.message + '</span></div>';
                 }
-            },
-            t(key) {
-                return this.translations[this.locale]?.[key] || this.translations.en[key] || key;
-            },
-            init() {
-                document.querySelectorAll('[data-i18n]').forEach(el => {
-                    const key = el.getAttribute('data-i18n');
-                    el.textContent = this.t(key);
-                });
-                document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-                    const key = el.getAttribute('data-i18n-placeholder');
-                    el.placeholder = this.t(key);
-                });
-            },
-            setLocale(locale) {
-                this.locale = locale;
-                localStorage.setItem('locale', locale);
-                this.init();
-            }
-        };
-        document.addEventListener('DOMContentLoaded', () => i18n.init());
-    </script>
-    <style>
-        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
-        }
-        .traffic-bar { transition: width 0.3s ease; }
-    </style>
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
-            <h1 class="text-2xl font-bold text-cyan-400">Sentinel-RS</h1>
-            <div class="flex items-center space-x-4">
-                <a href="/" class="text-sm text-gray-300 hover:text-white" data-i18n="dashboard">Dashboard</a>
-                <a href="/blocking" class="text-sm text-red-400 hover:text-red-300" data-i18n="blocking">Blocking</a>
-                <span class="text-sm text-gray-400" data-i18n="network_security_monitor">Network Security Monitor</span>
-                <div id="connection-status" class="flex items-center">
-                    <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                    <span class="ml-2 text-xs text-green-400" data-i18n="live">Live</span>
-                </div>
-                <select onchange="i18n.setLocale(this.value)" class="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded border border-gray-600">
-                    <option value="en">EN</option>
-                    <option value="pt">PT</option>
-                    <option value="es">ES</option>
-                </select>
-            </div>
-        </div>
-    </nav>
-
-    <main class="max-w-7xl mx-auto px-6 py-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm" data-i18n="trackers_blocked">Trackers Blocked</div>
-                <div class="text-2xl font-bold text-red-400">{{ blocklist_stats.trackers }}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm" data-i18n="malware_blocked">Malware Blocked</div>
-                <div class="text-2xl font-bold text-orange-400">{{ blocklist_stats.malware }}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm" data-i18n="attackers_blocked">Attackers Blocked</div>
-                <div class="text-2xl font-bold text-yellow-400">{{ blocklist_stats.attackers }}</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-gray-400 text-sm" data-i18n="custom_rules">Custom Rules</div>
-                <div class="text-2xl font-bold text-cyan-400">{{ blocklist_stats.custom }}</div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-gray-800 rounded-lg border border-gray-700">
-                <div class="px-4 py-3 border-b border-gray-700">
-                    <h2 class="font-semibold text-lg" data-i18n="dns_sinkhole">DNS Sinkhole</h2>
-                </div>
-                <div class="p-4">
-                    <div class="flex justify-between items-center mb-4">
-                        <span class="text-gray-400" data-i18n="status">Status</span>
-                        <span class="px-2 py-1 rounded text-xs font-medium bg-green-900 text-green-300" data-i18n="active">Active</span>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <div class="text-gray-500 text-sm" data-i18n="total_queries">Total Queries</div>
-                            <div class="text-xl font-bold">{{ dns_stats.queries }}</div>
-                        </div>
-                        <div>
-                            <div class="text-gray-500 text-sm" data-i18n="blocked">Blocked</div>
-                            <div class="text-xl font-bold text-red-400">{{ dns_stats.blocked }}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-gray-800 rounded-lg border border-gray-700">
-                <div class="px-4 py-3 border-b border-gray-700">
-                    <h2 class="font-semibold text-lg" data-i18n="firewall">Firewall</h2>
-                </div>
-                <div class="p-4">
-                    <div class="flex justify-between items-center mb-4">
-                        <span class="text-gray-400" data-i18n="status">Status</span>
-                        <span class="px-2 py-1 rounded text-xs font-medium {% if firewall_stats.enabled %}bg-green-900 text-green-300{% else %}bg-red-900 text-red-300{% endif %}">
-                            {% if firewall_stats.enabled %}<span data-i18n="active">Active</span>{% else %}<span data-i18n="disabled">Disabled</span>{% endif %}
-                        </span>
-                    </div>
-                    <div class="mb-4">
-                        <div class="text-gray-500 text-sm" data-i18n="backend">Backend</div>
-                        <div class="font-mono text-sm">{{ firewall_stats.backend }}</div>
-                    </div>
-                    <div>
-                        <div class="text-gray-500 text-sm" data-i18n="blocked_ips">Blocked IPs</div>
-                        <div class="text-xl font-bold">{{ firewall_stats.blocked_count }}</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg" data-i18n="blocked_ips">Blocked IP Addresses</h2>
-            </div>
-            <div class="p-4">
-                {% if blocked_ips.len() > 0 %}
-                <div class="space-y-2">
-                    {% for ip in blocked_ips %}
-                    <div class="flex justify-between items-center p-2 bg-gray-750 rounded">
-                        <span class="font-mono text-sm">{{ ip }}</span>
-                        <button class="text-xs text-red-400 hover:text-red-300" onclick="unblockIp('{{ ip }}')" data-i18n="unblock">Unblock</button>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="text-gray-500 text-center" data-i18n="no_ips_blocked">No IPs blocked</div>
-                {% endif %}
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg" data-i18n="block_configuration">Block Configuration</h2>
-            </div>
-            <div class="p-4 space-y-4">
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-300" data-i18n="block_trackers">Block Trackers</span>
-                    <input type="checkbox" {% if blocklist_stats.config.block_trackers %}checked{% endif %} class="w-5 h-5" onchange="updateConfig('block_trackers', this.checked)">
-                </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-300" data-i18n="block_malware">Block Malware</span>
-                    <input type="checkbox" {% if blocklist_stats.config.block_malware %}checked{% endif %} class="w-5 h-5" onchange="updateConfig('block_malware', this.checked)">
-                </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-300" data-i18n="block_attackers">Block Attackers</span>
-                    <input type="checkbox" {% if blocklist_stats.config.block_attackers %}checked{% endif %} class="w-5 h-5" onchange="updateConfig('block_attackers', this.checked)">
-                </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-300" data-i18n="auto_block_port_scanners">Auto-block Port Scanners</span>
-                    <input type="checkbox" {% if blocklist_stats.config.auto_block_attackers %}checked{% endif %} class="w-5 h-5" onchange="updateConfig('auto_block_attackers', this.checked)">
-                </div>
-                <div class="flex items-center justify-between">
-                    <span class="text-gray-300" data-i18n="port_scan_threshold">Port Scan Threshold</span>
-                    <input type="number" value="{{ blocklist_stats.config.port_scan_threshold }}" class="bg-gray-700 text-white px-2 py-1 rounded w-20" onchange="updateConfig('port_scan_threshold', this.value)">
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700">
-            <div class="px-4 py-3 border-b border-gray-700">
-                <h2 class="font-semibold text-lg" data-i18n="add_custom_block">Add Custom Block</h2>
-            </div>
-            <div class="p-4">
-                <div class="flex gap-2">
-                    <input type="text" id="customBlockInput" data-i18n-placeholder="domain_or_ip" placeholder="Domain or IP address" class="flex-1 bg-gray-700 text-white px-3 py-2 rounded">
-                    <button onclick="addCustomBlock()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded" data-i18n="block_btn">Block</button>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <script>
-        const eventSource = new EventSource('/events');
-
-        function unblockIp(ip) {
-            fetch('/api/unblock-ip', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ip: ip})
-            }).then(() => location.reload());
-        }
-
-        function addCustomBlock() {
-            const input = document.getElementById('customBlockInput');
-            const value = input.value.trim();
-            if (!value) return;
-            
-            fetch('/api/add-block', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({entry: value})
-            }).then(() => {
-                input.value = '';
-                location.reload();
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.textContent = 'Update Now';
+                status.innerHTML = '<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-cyber-danger"></span><span class="text-cyber-danger">Error: ' + err + '</span></div>';
             });
-        }
-
-        function updateConfig(key, value) {
-            fetch('/api/update-config', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({key: key, value: value})
-            });
-        }
-
-        eventSource.onerror = () => {
-            const status = document.getElementById('connection-status');
-            if (status) status.innerHTML = 
-                '<span class="w-2 h-2 bg-red-400 rounded-full"></span><span class="ml-2 text-xs text-red-400">' + i18n.t('disconnected') + '</span>';
-        };
-    </script>
-</body>
-</html>
+    }
+</script>
+{% endblock %}
