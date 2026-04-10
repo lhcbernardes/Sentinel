@@ -324,9 +324,7 @@ async fn api_block_domain(
     if !domain.contains('.') || domain.contains(' ') {
         return (
             StatusCode::BAD_REQUEST,
-            Json(ApiResponse::<()>::err(
-                "Invalid domain format".to_string(),
-            )),
+            Json(ApiResponse::<()>::err("Invalid domain format".to_string())),
         )
             .into_response();
     }
@@ -369,7 +367,9 @@ async fn api_traffic_stats(State(state): State<Arc<AppState>>) -> impl IntoRespo
     let total_bytes: u64 = packets.iter().map(|p| p.size as u64).sum();
     let mut protocol_counts = std::collections::HashMap::new();
     for p in &packets {
-        *protocol_counts.entry(p.protocol.to_string()).or_insert(0u64) += 1;
+        *protocol_counts
+            .entry(p.protocol.to_string())
+            .or_insert(0u64) += 1;
     }
     let mut top_protocols: Vec<_> = protocol_counts.into_iter().collect();
     top_protocols.sort_by(|a, b| b.1.cmp(&a.1));
@@ -445,7 +445,10 @@ async fn api_user_create(
     } else {
         UserRole::Viewer
     };
-    match state.auth.add_user(payload.username, payload.password, role) {
+    match state
+        .auth
+        .add_user(payload.username, payload.password, role)
+    {
         Ok(true) => Json(ApiResponse::ok(())).into_response(),
         Ok(false) => (
             StatusCode::CONFLICT,
@@ -454,7 +457,10 @@ async fn api_user_create(
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::<()>::err(format!("Erro ao criar usuário: {}", e))),
+            Json(ApiResponse::<()>::err(format!(
+                "Erro ao criar usuário: {}",
+                e
+            ))),
         )
             .into_response(),
     }
@@ -536,7 +542,10 @@ async fn api_user_password(
             .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::<()>::err(format!("Erro ao alterar senha: {}", e))),
+            Json(ApiResponse::<()>::err(format!(
+                "Erro ao alterar senha: {}",
+                e
+            ))),
         )
             .into_response(),
     }

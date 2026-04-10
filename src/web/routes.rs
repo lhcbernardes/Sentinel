@@ -77,12 +77,16 @@ pub async fn blocking(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let dns_stats = state.dns_sinkhole.stats();
     let firewall_stats = state.firewall.stats();
 
-    Html(BlockingTemplate {
-        blocklist_stats,
-        dns_stats,
-        firewall_stats,
-        blocked_ips,
-    }.render().unwrap_or_default())
+    Html(
+        BlockingTemplate {
+            blocklist_stats,
+            dns_stats,
+            firewall_stats,
+            blocked_ips,
+        }
+        .render()
+        .unwrap_or_default(),
+    )
 }
 
 // ─── New page templates (data loaded via API) ────────────────────────────────
@@ -342,8 +346,8 @@ pub async fn event_stream(
 pub fn create_router(state: Arc<AppState>) -> Router {
     // CORS restrito: usa ALLOWED_ORIGIN env var.
     // Padrão: localhost:8080 (sem wildcard).
-    let allowed_origin = std::env::var("ALLOWED_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+    let allowed_origin =
+        std::env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
     let cors_origin: axum::http::HeaderValue = allowed_origin
         .parse()
@@ -397,9 +401,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-async fn metrics_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl axum::response::IntoResponse {
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> impl axum::response::IntoResponse {
     state.metrics.record_request("metrics");
     (axum::http::StatusCode::OK, state.metrics.get_metrics())
 }

@@ -46,45 +46,49 @@ impl BlocklistUpdater {
         let client = Arc::new(client);
         let blocklist = self.blocklist.clone();
 
-        let futures: Vec<_> = urls.into_iter().enumerate().map(|(i, url)| {
-            let sem = semaphore.clone();
-            let _client = client.clone();
-            let blocklist = blocklist.clone();
-            
-            tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
-                
-                let block_type = if url.contains("tracker")
-                    || url.contains("ads")
-                    || url.contains("Ad")
-                    || url.contains("privacy")
-                {
-                    BlockType::Tracker
-                } else if url.contains("malware")
-                    || url.contains("phishing")
-                    || url.contains("scam")
-                    || url.contains("badware")
-                    || url.contains("toxic")
-                {
-                    BlockType::Malware
-                } else if url.contains("attacker") || url.contains("spam") {
-                    BlockType::Attacker
-                } else {
-                    BlockType::Tracker
-                };
+        let futures: Vec<_> = urls
+            .into_iter()
+            .enumerate()
+            .map(|(i, url)| {
+                let sem = semaphore.clone();
+                let _client = client.clone();
+                let blocklist = blocklist.clone();
 
-                match blocklist.load_from_url(&url, block_type).await {
-                    Ok(count) => {
-                        tracing::info!("[{}] Loaded {} entries from {}", i + 1, count, url);
-                        (block_type, count, true)
+                tokio::spawn(async move {
+                    let _permit = sem.acquire().await.unwrap();
+
+                    let block_type = if url.contains("tracker")
+                        || url.contains("ads")
+                        || url.contains("Ad")
+                        || url.contains("privacy")
+                    {
+                        BlockType::Tracker
+                    } else if url.contains("malware")
+                        || url.contains("phishing")
+                        || url.contains("scam")
+                        || url.contains("badware")
+                        || url.contains("toxic")
+                    {
+                        BlockType::Malware
+                    } else if url.contains("attacker") || url.contains("spam") {
+                        BlockType::Attacker
+                    } else {
+                        BlockType::Tracker
+                    };
+
+                    match blocklist.load_from_url(&url, block_type).await {
+                        Ok(count) => {
+                            tracing::info!("[{}] Loaded {} entries from {}", i + 1, count, url);
+                            (block_type, count, true)
+                        }
+                        Err(e) => {
+                            tracing::warn!("[{}] Failed to load {}: {}", i + 1, url, e);
+                            (block_type, 0, false)
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!("[{}] Failed to load {}: {}", i + 1, url, e);
-                        (block_type, 0, false)
-                    }
-                }
+                })
             })
-        }).collect();
+            .collect();
 
         let results = futures::future::join_all(futures).await;
 
@@ -138,39 +142,45 @@ impl BlocklistUpdater {
             "https://raw.githubusercontent.com/jarelllama/Scam-Blocklist/main/lists/wildcard_domains/scams.txt",
         ];
 
-        self.load_urls_parallel(attackers, BlockType::Attacker).await
+        self.load_urls_parallel(attackers, BlockType::Attacker)
+            .await
     }
 
-    async fn load_urls_parallel(&self, urls: Vec<&str>, block_type: BlockType) -> Result<usize, String> {
+    async fn load_urls_parallel(
+        &self,
+        urls: Vec<&str>,
+        block_type: BlockType,
+    ) -> Result<usize, String> {
         let semaphore = Arc::new(Semaphore::new(10));
         let blocklist = self.blocklist.clone();
-        
+
         let urls: Vec<String> = urls.into_iter().map(|s| s.to_string()).collect();
 
-        let futures: Vec<_> = urls.into_iter().map(|url| {
-            let sem = semaphore.clone();
-            let blocklist = blocklist.clone();
-            
-            tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
-                
-                match blocklist.load_from_url(&url, block_type).await {
-                    Ok(count) => {
-                        tracing::info!("Loaded {} entries from {}", count, url);
-                        count
+        let futures: Vec<_> = urls
+            .into_iter()
+            .map(|url| {
+                let sem = semaphore.clone();
+                let blocklist = blocklist.clone();
+
+                tokio::spawn(async move {
+                    let _permit = sem.acquire().await.unwrap();
+
+                    match blocklist.load_from_url(&url, block_type).await {
+                        Ok(count) => {
+                            tracing::info!("Loaded {} entries from {}", count, url);
+                            count
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to load {}: {}", url, e);
+                            0
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to load {}: {}", url, e);
-                        0
-                    }
-                }
+                })
             })
-        }).collect();
+            .collect();
 
         let results = futures::future::join_all(futures).await;
-        let total: usize = results.into_iter()
-            .map(|r| r.unwrap_or(0))
-            .sum();
+        let total: usize = results.into_iter().map(|r| r.unwrap_or(0)).sum();
 
         Ok(total)
     }
