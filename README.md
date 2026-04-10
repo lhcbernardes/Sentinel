@@ -1,124 +1,118 @@
 # Sentinel-RS 🛡️
 
-Network Security Monitor com blocking integrado em Rust.
+High-performance Local Network Security Monitor written in Rust.
 
-## Funcionalidades
+## Features
 
-### 🔍 Monitoramento de Rede
-- **Sniffer de pacotes**: Captura de pacotes em tempo real usando pcap
-- **Identificação de dispositivos**: Detecção de dispositivos na rede via MAC e OUI
-- **Análise de tráfego**: Protocolos TCP, UDP, ICMP
-- **Monitor DHCP**: Rastreamento de leases DHCP
+### 🔍 Network Monitoring
+- **Packet Sniffer**: Real-time packet capture using pcap
+- **Device Discovery**: Network device detection via MAC and OUI
+- **Traffic Analysis**: TCP, UDP, ICMP protocols
+- **DHCP Monitoring**: DHCP lease tracking
 
-### 🚨 Detecção de Anomalias
-- **Port Scan Detection**: Identifica varreduras de portas suspeitas
-- **Alertas em tempo real**: Notificações SSE para eventos de segurança
+### 🚨 Anomaly Detection
+- **Port Scan Detection**: Identifies suspicious port scans
+- **Ransomware Detection**: Entropy analysis and behavioral monitoring
+- **Real-time Alerts**: SSE notifications for security events
 
-### 🛡️ Sistema de Blocking
-- **DNS Sinkhole**: Bloqueio de domínios maliciosos via DNS
-- **Firewall**: Integração com iptables (Linux) / pf (macOS)
-- **Blocklists**: Suporte a múltiplas fontes:
-  - fabriziosalmi/blacklists (60+ listas)
+### 🛡️ Blocking System
+- **DNS Sinkhole**: Malicious domain blocking via DNS
+- **Firewall**: Integration with iptables (Linux) / pf (macOS)
+- **Blocklists**: Multiple sources:
+  - fabriziosalmi/blacklists (60+ lists)
   - StevenBlack Hosts
   - Firebog lists
   - Malware domain lists
-  - Listas personalizadas
 
-### 🌐 Interface Web
-- **Dashboard em tempo real**: HTMX + TailwindCSS
-- **Streaming de eventos**: Atualizações ao vivo via Server-Sent Events
-- **Gerenciamento de blocks**: Adicionar/remover domínios e IPs
+### 🌐 Web Interface
+- **Real-time Dashboard**: HTMX + TailwindCSS
+- **Event Streaming**: Live updates via Server-Sent Events
+- **Blocking Management**: Add/remove domains and IPs
 
-### 💾 Persistência
-- **SQLite**: Armazenamento de dados local
-- **Backup/Restore**: Sistema de backup completo
+### 💾 Persistence
+- **SQLite**: Local data storage
+- **Backup/Restore**: Complete backup system
 
-## Requisitos
+### 📊 Observability
+- **Prometheus Metrics**: `/metrics` endpoint
+- **Grafana Integration**: Pre-configured dashboards
+- **Alertmanager**: Alert routing and notification
+
+## Requirements
 
 - Rust 1.70+
-- macOS ou Linux
-- Permissões de root para captura de pacotes e DNS
+- macOS or Linux
+- Root privileges for packet capture and DNS
 
-## Instalação
+## Quick Start
 
 ```bash
-# Clone o projeto
-cd sentinel-rs
+# Clone the project
+git clone https://github.com/lhcbernardes/Sentinel.git
+cd Sentinel
 
-# Compile
+# Build
 cargo build
 
-# Execute (sem sniffer - para testes)
+# Run (without sniffer - for testing)
 SNIFFER_ENABLED=false cargo run
 
-# Execute com sudo (completo)
+# Run with sudo (full features)
 sudo cargo run
 ```
 
-## Variáveis de Ambiente
+## Environment Variables
 
-| Variável | Padrão | Descrição |
-|-----------|--------|-----------|
-| `INTERFACE` | auto | Interface de rede |
-| `DB_PATH` | data/sentinel.db | Caminho do banco SQLite |
-| `OUI_PATH` | data/oui.txt | Banco de dados OUI |
-| `SNIFFER_ENABLED` | true | Ativar sniffer de pacotes |
-| `DNS_ENABLED` | false | Ativar DNS sinkhole |
-| `DNS_PORT` | 53 | Porta do DNS sinkhole |
-| `FIREWALL_ENABLED` | true | Ativar gerenciamento de firewall |
-| `LISTEN_ADDR` | 0.0.0.0:8080 | Endereço do servidor web |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INTERFACE` | auto | Network interface |
+| `DB_PATH` | data/sentinel.db | SQLite database path |
+| `SNIFFER_ENABLED` | true | Enable packet sniffer |
+| `DNS_ENABLED` | false | Enable DNS sinkhole |
+| `DNS_PORT` | 53 | DNS sinkhole port |
+| `FIREWALL_ENABLED` | true | Enable firewall management |
+| `LISTEN_ADDR` | 0.0.0.0:8080 | Server listen address |
 
-## Configuração de Rede
+## Network Setup
 
-### Opção 1: DNS do Roteador (Recomendado)
-1. Descubra o IP da máquina: `ifconfig` ou `ip addr`
-2. Acesse as configurações do roteador
-3. Configure o DNS primário para o IP da máquina do Sentinel-RS
+### Option 1: Router DNS (Recommended)
+1. Find machine IP: `ifconfig` or `ip addr`
+2. Access router settings
+3. Set primary DNS to Sentinel-RS machine IP
 
-### Opção 2: DNS nos Dispositivos
-Configure manualmente o DNS para o IP da máquina do Sentinel-RS em cada dispositivo.
-
-### Opção 3: DNS Sinkhole Nativo
+### Option 2: DNS Sinkhole
 ```bash
 sudo DNS_ENABLED=true DNS_PORT=53 cargo run
 ```
 
-## Acesso
+## Access
 
 - **Dashboard**: http://localhost:8080
 - **Blocking**: http://localhost:8080/blocking
 - **API Events**: http://localhost:8080/events
 
-## Estrutura do Projeto
+## Default Credentials
 
-```
-sentinel-rs/
-├── src/
-│   ├── sniffer/      # Captura de pacotes
-│   ├── devices/      # Gerenciamento de dispositivos
-│   ├── anomaly/      # Detecção de anomalias
-│   ├── blocking/     # Sistema de blocking (DNS, Firewall)
-│   ├── db/           # Persistência SQLite
-│   ├── web/          # Servidor Axum
-│   └── network/      # Scanner, DHCP, VPN
-├── templates/        # Templates HTML
-└── data/             # Dados (banco, blocklists)
+- **Username**: admin
+- **Password**: admin123
+
+⚠️ Change password in production!
+
+## Docker
+
+```bash
+docker-compose up -d
 ```
 
-## Tecnologias
+Services: Sentinel-RS, Prometheus, Grafana, Alertmanager
+
+## Tech Stack
 
 - **Backend**: Rust, Axum, Tokio
 - **Database**: SQLite (rusqlite)
 - **Frontend**: HTML, TailwindCSS, HTMX
 - **Packet Capture**: pcap, etherparse
 
-## Usuário Padrão
-
-- **Usuário**: admin
-- **Senha**: admin123
-
-⚠️ Altere a senha em produção!
-
-## Licença
+## License
 
 MIT License
