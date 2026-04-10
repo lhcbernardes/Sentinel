@@ -136,11 +136,7 @@ impl RansomwareDetector {
     ) -> Option<RansomwareAlert> {
         let now = chrono::Utc::now().timestamp_millis();
 
-        let entry = self
-            .file_operations
-            .entry(ip.clone())
-            // #[allow(clippy::or_insert_with_default)]
-            .or_insert_with(VecDeque::new);
+        let entry = self.file_operations.entry(ip.clone()).or_default();
 
         if entry.len() > 100 {
             entry.pop_front();

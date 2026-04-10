@@ -143,6 +143,12 @@ pub struct PrometheusServer {
     exporter: Arc<MetricsExporter>,
 }
 
+impl Default for PrometheusServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrometheusServer {
     pub fn new() -> Self {
         Self {

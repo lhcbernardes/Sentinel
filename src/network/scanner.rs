@@ -107,7 +107,7 @@ impl NetworkScanner {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         if parts.len() >= 4 {
                             let ip = parts[0].to_string();
-                            let mac = parts[3].replace(":", ":");
+                            let mac = parts[3].to_string();
                             if mac != "00:00:00:00:00:00" {
                                 results.push(ScanResult {
                                     ip,

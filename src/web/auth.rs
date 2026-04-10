@@ -86,6 +86,7 @@ pub fn extract_token(headers: &axum::http::HeaderMap) -> Option<String> {
 
 /// Verifica presença e validade do token. Retorna o payload ou uma `Response`
 /// 401 pronta para retornar do handler.
+#[allow(clippy::result_large_err)]
 pub fn require_auth(
     state: &AppState,
     headers: &axum::http::HeaderMap,
@@ -98,6 +99,7 @@ pub fn require_auth(
 }
 
 /// Igual a `require_auth`, mas exige role `admin`.
+#[allow(clippy::result_large_err)]
 pub fn require_admin(
     state: &AppState,
     headers: &axum::http::HeaderMap,

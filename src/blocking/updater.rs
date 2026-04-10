@@ -91,13 +91,11 @@ impl BlocklistUpdater {
         let mut total_trackers = 0;
         let mut total_malware = 0;
 
-        for result in results {
-            if let Ok((block_type, count, _)) = result {
-                if block_type == BlockType::Tracker {
-                    total_trackers += count;
-                } else {
-                    total_malware += count;
-                }
+        for (block_type, count, _) in results.into_iter().flatten() {
+            if block_type == BlockType::Tracker {
+                total_trackers += count;
+            } else {
+                total_malware += count;
             }
         }
 
@@ -149,7 +147,7 @@ impl BlocklistUpdater {
         
         let urls: Vec<String> = urls.into_iter().map(|s| s.to_string()).collect();
 
-        let futures: Vec<_> = urls.into_iter().enumerate().map(|(_i, url)| {
+        let futures: Vec<_> = urls.into_iter().map(|url| {
             let sem = semaphore.clone();
             let blocklist = blocklist.clone();
             

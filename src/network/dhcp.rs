@@ -146,6 +146,7 @@ impl DhcpMonitor {
         }
     }
 
+    #[allow(dead_code)]
     fn parse_macos_dhcp(&self, content: &str) {
         let mut leases = self.leases.write();
 
