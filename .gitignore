@@ -19,7 +19,7 @@ data/
 *.db-wal
 
 # Logs
-logs/
+/logs/
 *.log
 
 # Environment
