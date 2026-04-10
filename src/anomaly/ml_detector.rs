@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficSample {
@@ -76,7 +76,7 @@ impl Default for AnomalyThresholds {
 pub struct MlDetector {
     baselines: HashMap<String, DeviceBaseline>,
     thresholds: AnomalyThresholds,
-    recent_anomalies: Vec<Anomaly>,
+    recent_anomalies: VecDeque<Anomaly>,
 }
 
 impl MlDetector {
@@ -84,7 +84,7 @@ impl MlDetector {
         Self {
             baselines: HashMap::new(),
             thresholds: AnomalyThresholds::default(),
-            recent_anomalies: Vec::new(),
+            recent_anomalies: VecDeque::with_capacity(101),
         }
     }
 
@@ -155,11 +155,11 @@ impl MlDetector {
         }
 
         for anomaly in &anomalies {
-            self.recent_anomalies.push(anomaly.clone());
+            self.recent_anomalies.push_back(anomaly.clone());
         }
 
-        if self.recent_anomalies.len() > 100 {
-            self.recent_anomalies.remove(0);
+        while self.recent_anomalies.len() > 100 {
+            self.recent_anomalies.pop_front();
         }
 
         anomalies

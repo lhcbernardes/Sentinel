@@ -5,6 +5,7 @@ pub mod backup;
 pub mod blocking;
 pub mod db;
 pub mod devices;
+pub mod error;
 pub mod history;
 pub mod logs;
 pub mod metrics;
@@ -37,14 +38,8 @@ pub use sniffer::packet::PacketInfo;
 pub use stats::{NetworkStats, StatsManager};
 pub use threatintel::ThreatIntelligence;
 
-const PACKET_CACHE_SIZE: usize = 100;
-const MAX_PACKET_CACHE_SIZE: usize = 1000;
-
-pub fn enforce_cache_limit<T>(cache: &mut VecDeque<T>, max_size: usize) {
-    while cache.len() > max_size {
-        cache.pop_back();
-    }
-}
+/// Maximum number of packets to keep in the in-memory cache.
+const PACKET_CACHE_SIZE: usize = 1000;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -66,7 +61,7 @@ pub struct AppState {
     pub vpn_manager: Arc<VpnManager>,
     pub stats: Arc<StatsManager>,
     pub backup: Arc<BackupManager>,
-    pub netflow_collector: Arc<RwLock<Vec<NetFlowRecord>>>,
+    pub netflow_collector: Arc<RwLock<VecDeque<NetFlowRecord>>>,
     pub dpi_engine: Arc<DpiEngine>,
     pub metrics: Arc<MetricsExporter>,
 }
@@ -102,7 +97,7 @@ impl AppState {
             vpn_manager: Arc::new(VpnManager::new()),
             stats: Arc::new(StatsManager::new()),
             backup: Arc::new(BackupManager::new()),
-            netflow_collector: Arc::new(RwLock::new(Vec::new())),
+            netflow_collector: Arc::new(RwLock::new(VecDeque::new())),
             dpi_engine: Arc::new(DpiEngine::new()),
             metrics: Arc::new(MetricsExporter::new()),
         }
@@ -111,9 +106,7 @@ impl AppState {
     pub fn add_packet(&self, packet: PacketInfo) {
         let mut cache = self.packet_cache.write();
 
-        enforce_cache_limit(&mut cache, MAX_PACKET_CACHE_SIZE);
-
-        if cache.len() >= PACKET_CACHE_SIZE {
+        while cache.len() >= PACKET_CACHE_SIZE {
             cache.pop_front();
         }
         cache.push_back(packet.clone());
@@ -122,8 +115,5 @@ impl AppState {
     }
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        unimplemented!("AppState must be initialized with dependencies")
-    }
-}
+// NOTE: Default is intentionally not implemented for AppState.
+// AppState must be constructed via AppState::new() with its required dependencies.

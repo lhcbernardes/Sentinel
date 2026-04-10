@@ -1,7 +1,9 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use sentinel_rs::devices::oui;
@@ -65,7 +67,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| PathBuf::from("data/sentinel.db"));
 
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            warn!("Failed to create data directory {:?}: {}", parent, e);
+        }
     }
 
     let database =
@@ -133,23 +137,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         firewall.clone(),
     ));
 
-    // Start DNS sinkhole if enabled
-    if dns_sinkhole_enabled {
-        let dns_port: u16 = std::env::var("DNS_PORT")
-            .map(|p| p.parse().unwrap_or(53))
-            .unwrap_or(53);
-
-        let dns = dns_sinkhole.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
-                if let Err(e) = dns.start(dns_port).await {
-                    tracing::error!("DNS sinkhole error: {}", e);
-                }
-            });
-        });
-        info!("DNS sinkhole started on port {}", dns_port);
-    }
+    // Shared shutdown flag for sniffer thread
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
 
     // Start sniffer (skip if no permissions)
     let sniffer_enabled = std::env::var("SNIFFER_ENABLED")
@@ -162,23 +151,98 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_state.packet_tx.clone(),
             device_manager,
             anomaly_detector,
-            database,
+            database.clone(),
+            shutdown_flag.clone(),
         );
         info!("Sniffer started");
     }
 
-    // Start web server
+    // Start web server and async tasks on a single tokio runtime
     let router = web::create_router(app_state.clone());
-
     let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
 
     info!("Starting web server on http://{}", addr);
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
-        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-        axum::serve(listener, router).await.ok();
-    });
+        // Start DNS sinkhole as a tokio task (not a separate runtime)
+        if dns_sinkhole_enabled {
+            let dns_port: u16 = std::env::var("DNS_PORT")
+                .map(|p| p.parse().unwrap_or(53))
+                .unwrap_or(53);
+
+            let dns = dns_sinkhole.clone();
+            tokio::spawn(async move {
+                if let Err(e) = dns.start(dns_port).await {
+                    tracing::error!("DNS sinkhole error: {}", e);
+                }
+            });
+            info!("DNS sinkhole started on port {}", dns_port);
+        }
+
+        // Start periodic session cleanup task
+        let auth_for_cleanup = app_state.auth.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // every 5 min
+            loop {
+                interval.tick().await;
+                auth_for_cleanup.cleanup_expired();
+                tracing::debug!("Cleaned up expired sessions and login attempts");
+            }
+        });
+
+        // Start periodic database cleanup task
+        let db_for_cleanup = database.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // every hour
+            interval.tick().await; // skip the first immediate tick
+            loop {
+                interval.tick().await;
+                match db_for_cleanup.cleanup_old_logs(30) {
+                    Ok(count) => {
+                        if count > 0 {
+                            tracing::info!("Periodic cleanup removed {} old records", count);
+                        }
+                    }
+                    Err(e) => tracing::warn!("Periodic cleanup failed: {}", e),
+                }
+            }
+        });
+
+        // Bind listener
+        let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
+            error!("Failed to bind to {}: {}", addr, e);
+            format!("Failed to bind to {}: {}", addr, e)
+        })?;
+        info!("Web server listening on http://{}", addr);
+
+        // Graceful shutdown: wait for Ctrl+C
+        let shutdown_flag_for_signal = shutdown_flag.clone();
+        let firewall_for_cleanup = firewall.clone();
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to install Ctrl+C handler");
+                info!("Shutdown signal received — draining connections...");
+
+                // Signal the sniffer thread to stop
+                shutdown_flag_for_signal.store(true, Ordering::SeqCst);
+
+                // Cleanup firewall rules
+                firewall_for_cleanup.cleanup();
+                info!("Firewall rules cleaned up");
+            })
+            .await
+            .map_err(|e| {
+                error!("Web server error: {}", e);
+                format!("Web server error: {}", e)
+            })?;
+
+        info!("Sentinel-RS shut down gracefully");
+        Ok::<(), String>(())
+    })
+    .map_err(|e: String| e)?;
 
     Ok(())
 }

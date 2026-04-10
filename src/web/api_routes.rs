@@ -40,7 +40,7 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/logout", post(api_logout))
         .route("/v1/refresh", post(api_refresh))
         .route("/v1/devices", get(api_devices_list))
-        .route("/v1/devices/:id", get(api_device_detail))
+        .route("/v1/devices/{id}", get(api_device_detail))
         .route("/v1/packets", get(api_packets_list))
         .route("/v1/packets/stats", get(api_packets_stats))
         .route("/v1/alerts", get(api_alerts_list))
@@ -49,7 +49,7 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/blocklist/stats", get(api_blocklist_stats))
         .route("/v1/blocklist/ips", get(api_blocked_ips))
         .route("/v1/blocklist/ips", post(api_block_ip))
-        .route("/v1/blocklist/ips/:ip", delete(api_unblock_ip))
+        .route("/v1/blocklist/ips/{ip}", delete(api_unblock_ip))
         .route("/v1/blocklist/domains", post(api_block_domain))
         .route("/v1/blocklist/update", post(api_update_blocklist))
         .route("/v1/firewall/status", get(api_firewall_status))
@@ -59,8 +59,8 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/config", get(api_config_get))
         .route("/v1/users", get(api_users_list))
         .route("/v1/users", post(api_user_create))
-        .route("/v1/users/:username", get(api_user_detail))
-        .route("/v1/users/:username/password", put(api_user_password))
+        .route("/v1/users/{username}", get(api_user_detail))
+        .route("/v1/users/{username}/password", put(api_user_password))
         .route("/v1/netflow/collect", post(api_netflow_collect))
         .route("/v1/netflow/stats", get(api_netflow_stats))
         .route("/v1/dpi/inspect", post(api_dpi_inspect))
@@ -310,7 +310,27 @@ async fn api_block_domain(
     if let Err(resp) = require_admin(&state, &headers) {
         return resp;
     }
-    state.blocklist.add_custom_block(payload.domain);
+    // Validate domain
+    let domain = payload.domain.trim().to_lowercase();
+    if domain.is_empty() || domain.len() > 253 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err(
+                "Domain must be between 1 and 253 characters".to_string(),
+            )),
+        )
+            .into_response();
+    }
+    if !domain.contains('.') || domain.contains(' ') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err(
+                "Invalid domain format".to_string(),
+            )),
+        )
+            .into_response();
+    }
+    state.blocklist.add_custom_block(domain);
     Json(ApiResponse::ok(())).into_response()
 }
 
@@ -425,14 +445,18 @@ async fn api_user_create(
     } else {
         UserRole::Viewer
     };
-    if state.auth.add_user(payload.username, payload.password, role) {
-        Json(ApiResponse::ok(())).into_response()
-    } else {
-        (
+    match state.auth.add_user(payload.username, payload.password, role) {
+        Ok(true) => Json(ApiResponse::ok(())).into_response(),
+        Ok(false) => (
             StatusCode::CONFLICT,
             Json(ApiResponse::<()>::err("Usuário já existe".to_string())),
         )
-            .into_response()
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()>::err(format!("Erro ao criar usuário: {}", e))),
+        )
+            .into_response(),
     }
 }
 
@@ -503,14 +527,18 @@ async fn api_user_password(
         }
     }
 
-    if state.auth.change_password(&username, &payload.new_password) {
-        Json(ApiResponse::ok(())).into_response()
-    } else {
-        (
+    match state.auth.change_password(&username, &payload.new_password) {
+        Ok(true) => Json(ApiResponse::ok(())).into_response(),
+        Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(ApiResponse::<()>::err("Usuário não encontrado".to_string())),
         )
-            .into_response()
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()>::err(format!("Erro ao alterar senha: {}", e))),
+        )
+            .into_response(),
     }
 }
 
@@ -518,41 +546,73 @@ async fn api_user_password(
 
 async fn api_netflow_collect(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(flow): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
     let mut c = state.netflow_collector.write();
     if let Ok(r) = serde_json::from_value::<crate::NetFlowRecord>(flow) {
-        c.push(r);
-        // Cap para evitar OOM sob alta carga
-        if c.len() > 10_000 {
-            c.drain(0..5_000);
+        c.push_back(r);
+        // Cap para evitar OOM sob alta carga — drop oldest entries
+        while c.len() > 10_000 {
+            c.pop_front();
         }
     }
     Json(ApiResponse::ok(())).into_response()
 }
 
-async fn api_netflow_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn api_netflow_stats(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
     let flows = state.netflow_collector.read();
-    Json(ApiResponse::ok(serde_json::json!({ "flows": flows.len() })))
+    Json(ApiResponse::ok(serde_json::json!({ "flows": flows.len() }))).into_response()
 }
 
 // ─── DPI ─────────────────────────────────────────────────────────────────────
 
 async fn api_dpi_inspect(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<DpiInspectRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    // Limit payload size to prevent resource exhaustion (1MB max)
+    if payload.data.len() > 1_048_576 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err(
+                "Payload too large (max 1MB)".to_string(),
+            )),
+        )
+            .into_response();
+    }
     let r = state.dpi_engine.inspect(&payload.data, &payload.protocol);
     Json(ApiResponse::ok(
         serde_json::json!({ "application": r.application, "risk_level": r.risk_level }),
     ))
+    .into_response()
 }
 
-async fn api_dpi_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn api_dpi_stats(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
     let s = state.dpi_engine.get_stats();
     Json(ApiResponse::ok(
         serde_json::json!({ "packets_inspected": s.packets_inspected }),
     ))
+    .into_response()
 }
 
 // ─── SIEM export ──────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
@@ -49,6 +50,9 @@ pub enum NotificationSeverity {
     Critical,
 }
 
+/// Per-channel send timeout.
+const CHANNEL_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct NotificationManager {
     config: parking_lot::RwLock<NotificationConfig>,
     client: reqwest::Client,
@@ -62,54 +66,99 @@ impl NotificationManager {
                 slack: None,
                 email: None,
             }),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(CHANNEL_TIMEOUT)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
-    pub fn configure_telegram(&self, config: TelegramConfig) {
+    pub fn configure_telegram(&self, config: TelegramConfig) -> Result<(), String> {
+        if config.bot_token.is_empty() {
+            return Err("Telegram bot_token cannot be empty".to_string());
+        }
+        if config.chat_ids.is_empty() {
+            return Err("Telegram chat_ids cannot be empty".to_string());
+        }
         self.config.write().telegram = Some(config);
+        Ok(())
     }
 
-    pub fn configure_slack(&self, config: SlackConfig) {
+    pub fn configure_slack(&self, config: SlackConfig) -> Result<(), String> {
+        if config.webhook_url.is_empty() {
+            return Err("Slack webhook_url cannot be empty".to_string());
+        }
+        // Validate URL format
+        if url::Url::parse(&config.webhook_url).is_err() {
+            return Err("Slack webhook_url is not a valid URL".to_string());
+        }
         self.config.write().slack = Some(config);
+        Ok(())
     }
 
-    pub fn configure_email(&self, config: EmailConfig) {
+    pub fn configure_email(&self, config: EmailConfig) -> Result<(), String> {
+        if config.smtp_server.is_empty() {
+            return Err("SMTP server cannot be empty".to_string());
+        }
+        if config.smtp_port == 0 {
+            return Err("SMTP port must be > 0".to_string());
+        }
+        if config.to_emails.is_empty() {
+            return Err("Email recipients cannot be empty".to_string());
+        }
         self.config.write().email = Some(config);
+        Ok(())
     }
 
-    pub async fn send(&self, notification: NotificationMessage) {
+    /// Send notification to all configured and enabled channels in parallel.
+    /// Returns a list of errors for channels that failed.
+    pub async fn send(&self, notification: NotificationMessage) -> Vec<String> {
         let config = self.config.read().clone();
+        let mut errors = Vec::new();
 
-        if let Some(telegram) = &config.telegram {
-            if telegram.enabled {
-                self.send_telegram(telegram, &notification).await;
-            }
+        // Send to all channels concurrently with individual timeouts
+        let (tg_result, sl_result, em_result) = tokio::join!(
+            self.send_telegram_safe(&config.telegram, &notification),
+            self.send_slack_safe(&config.slack, &notification),
+            self.send_email_safe(&config.email, &notification),
+        );
+
+        if let Err(e) = tg_result {
+            errors.push(format!("Telegram: {}", e));
+        }
+        if let Err(e) = sl_result {
+            errors.push(format!("Slack: {}", e));
+        }
+        if let Err(e) = em_result {
+            errors.push(format!("Email: {}", e));
         }
 
-        if let Some(slack) = &config.slack {
-            if slack.enabled {
-                self.send_slack(slack, &notification).await;
-            }
+        if !errors.is_empty() {
+            tracing::warn!("Notification errors: {:?}", errors);
         }
 
-        if let Some(email) = &config.email {
-            if email.enabled {
-                self.send_email(email, &notification).await;
-            }
-        }
+        errors
     }
 
-    async fn send_telegram(&self, config: &TelegramConfig, notification: &NotificationMessage) {
+    async fn send_telegram_safe(
+        &self,
+        config: &Option<TelegramConfig>,
+        notification: &NotificationMessage,
+    ) -> Result<(), String> {
+        let config = match config {
+            Some(c) if c.enabled => c,
+            _ => return Ok(()),
+        };
+
         let emoji = match notification.severity {
-            NotificationSeverity::Info => "ℹ️",
-            NotificationSeverity::Warning => "⚠️",
-            NotificationSeverity::Error => "❌",
-            NotificationSeverity::Critical => "🔴",
+            NotificationSeverity::Info => "i",
+            NotificationSeverity::Warning => "!",
+            NotificationSeverity::Error => "X",
+            NotificationSeverity::Critical => "!!",
         };
 
         let text = format!(
-            "{} *{}*\n\n{}\n\n⏰ {}",
+            "[{}] *{}*\n\n{}\n\n{}",
             emoji,
             notification.title,
             notification.message,
@@ -130,13 +179,27 @@ impl NotificationManager {
                 "parse_mode": "Markdown"
             });
 
-            if let Err(e) = self.client.post(&url).json(&body).send().await {
-                tracing::warn!("Failed to send Telegram notification: {}", e);
-            }
+            self.client
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Failed to send to chat {}: {}", chat_id, e))?;
         }
+
+        Ok(())
     }
 
-    async fn send_slack(&self, config: &SlackConfig, notification: &NotificationMessage) {
+    async fn send_slack_safe(
+        &self,
+        config: &Option<SlackConfig>,
+        notification: &NotificationMessage,
+    ) -> Result<(), String> {
+        let config = match config {
+            Some(c) if c.enabled => c,
+            _ => return Ok(()),
+        };
+
         let color = match notification.severity {
             NotificationSeverity::Info => "#36a64f",
             NotificationSeverity::Warning => "#ff9800",
@@ -154,26 +217,36 @@ impl NotificationManager {
             }]
         });
 
-        if let Err(e) = self
-            .client
+        self.client
             .post(&config.webhook_url)
             .json(&payload)
             .send()
             .await
-        {
-            tracing::warn!("Failed to send Slack notification: {}", e);
-        }
+            .map_err(|e| format!("Slack webhook error: {}", e))?;
+
+        Ok(())
     }
 
-    async fn send_email(&self, config: &EmailConfig, notification: &NotificationMessage) {
-        // Email sending requires more complex SMTP handling
-        // For now, we'll log the attempt
+    async fn send_email_safe(
+        &self,
+        config: &Option<EmailConfig>,
+        notification: &NotificationMessage,
+    ) -> Result<(), String> {
+        let config = match config {
+            Some(c) if c.enabled => c,
+            _ => return Ok(()),
+        };
+
+        // Email sending requires SMTP library (not yet implemented).
+        // Log for now so callers know it was attempted.
         tracing::info!(
-            "Email notification: {} - {} to {:?}",
+            "Email notification (SMTP not implemented): {} - {} to {:?}",
             notification.title,
             notification.message,
             config.to_emails
         );
+
+        Ok(())
     }
 
     pub fn get_config(&self) -> NotificationConfig {

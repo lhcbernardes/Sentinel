@@ -183,6 +183,9 @@ impl Blocklist {
         Ok(count)
     }
 
+    /// Maximum allowed blocklist download size (50 MB).
+    const MAX_BLOCKLIST_DOWNLOAD_BYTES: u64 = 50 * 1024 * 1024;
+
     pub async fn load_from_url(&self, url: &str, block_type: BlockType) -> Result<usize, String> {
         // Validate URL to prevent SSRF attacks
         let parsed_url = url::Url::parse(url).map_err(|_| "Invalid URL format".to_string())?;
@@ -192,16 +195,10 @@ impl Blocklist {
             return Err("Only HTTP and HTTPS URLs are allowed".to_string());
         }
 
-        // Block private/internal IPs
+        // Block private/internal IPs — comprehensive check
         let host = parsed_url.host_str().ok_or("Invalid URL: no host")?;
 
-        if host == "localhost"
-            || host.starts_with("127.")
-            || host.starts_with("10.")
-            || host.starts_with("192.168.")
-            || host.starts_with("172.16.")
-            || host.ends_with(".local")
-        {
+        if Self::is_private_host(host) {
             return Err("Private/internal URLs are not allowed".to_string());
         }
 
@@ -216,10 +213,26 @@ impl Blocklist {
             .await
             .map_err(|e| format!("Failed to fetch blocklist: {}", e))?;
 
+        // Check Content-Length before downloading to prevent OOM
+        if let Some(content_length) = response.content_length() {
+            if content_length > Self::MAX_BLOCKLIST_DOWNLOAD_BYTES {
+                return Err(format!(
+                    "Blocklist too large: {} bytes (max {} MB)",
+                    content_length,
+                    Self::MAX_BLOCKLIST_DOWNLOAD_BYTES / (1024 * 1024)
+                ));
+            }
+        }
+
         let content = response
             .text()
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        // Also check actual downloaded size
+        if content.len() as u64 > Self::MAX_BLOCKLIST_DOWNLOAD_BYTES {
+            return Err("Blocklist response body exceeds maximum allowed size".to_string());
+        }
 
         let domains = Self::parse_blocklist(&content);
 
@@ -330,6 +343,51 @@ impl Blocklist {
 
     pub fn update_config(&self, config: BlocklistConfig) {
         *self.config.write() = config;
+    }
+}
+
+impl Blocklist {
+    /// Check if a hostname resolves to or represents a private/internal address.
+    /// Covers IPv4 private ranges, IPv6 private ranges, localhost, and local domains.
+    fn is_private_host(host: &str) -> bool {
+        use std::net::IpAddr;
+
+        // Check well-known private hostnames
+        if host == "localhost"
+            || host == "[::1]"
+            || host.ends_with(".local")
+            || host.ends_with(".internal")
+            || host.ends_with(".localhost")
+        {
+            return true;
+        }
+
+        // Try to parse as IP address for comprehensive range checking
+        let ip = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>();
+
+        if let Ok(addr) = ip {
+            return match addr {
+                IpAddr::V4(v4) => {
+                    v4.is_loopback()           // 127.0.0.0/8
+                        || v4.is_private()     // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                        || v4.is_link_local()  // 169.254.0.0/16
+                        || v4.is_unspecified() // 0.0.0.0
+                }
+                IpAddr::V6(v6) => {
+                    v6.is_loopback()  // ::1
+                        || v6.is_unspecified()  // ::
+                        // fc00::/7 — Unique Local Addresses
+                        || (v6.segments()[0] & 0xfe00) == 0xfc00
+                        // fe80::/10 — Link-Local
+                        || (v6.segments()[0] & 0xffc0) == 0xfe80
+                }
+            };
+        }
+
+        false
     }
 }
 

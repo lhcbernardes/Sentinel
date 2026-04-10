@@ -54,7 +54,28 @@ fn generate_random_secret() -> Vec<u8> {
         .collect()
 }
 
-fn hash_password(password: &str) -> String {
+/// Validates password complexity:
+/// - Minimum 8 characters
+/// - At least one uppercase letter
+/// - At least one digit
+/// - At least one special character
+fn validate_password(password: &str) -> Result<(), String> {
+    if password.len() < 8 {
+        return Err("Senha deve ter pelo menos 8 caracteres".to_string());
+    }
+    if !password.chars().any(|c| c.is_uppercase()) {
+        return Err("Senha deve conter pelo menos uma letra maiúscula".to_string());
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err("Senha deve conter pelo menos um número".to_string());
+    }
+    if !password.chars().any(|c| !c.is_alphanumeric()) {
+        return Err("Senha deve conter pelo menos um caractere especial".to_string());
+    }
+    Ok(())
+}
+
+fn hash_password(password: &str) -> Result<String, String> {
     use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
     use rand::rngs::OsRng;
 
@@ -64,7 +85,7 @@ fn hash_password(password: &str) -> String {
     argon2
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
-        .unwrap_or_else(|_| password.to_string())
+        .map_err(|e| format!("Failed to hash password: {}", e))
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
@@ -154,16 +175,17 @@ impl AuthManager {
     pub fn new() -> Self {
         let jwt_secret = get_jwt_secret();
 
-        // Senha padrão configurável via env; warning se usar o padrão fraco.
+        // Senha padrão configurável via env; warning se usar o padrão.
         let default_password = std::env::var("SENTINEL_ADMIN_PASSWORD").unwrap_or_else(|_| {
             tracing::warn!(
-                "SENTINEL_ADMIN_PASSWORD não definida. Usando senha padrão 'admin123'. \
+                "SENTINEL_ADMIN_PASSWORD não definida. Usando senha padrão 'Sentinel@2024'. \
                  ALTERE ESTA SENHA IMEDIATAMENTE em produção!"
             );
-            "admin123".to_string()
+            "Sentinel@2024".to_string()
         });
 
-        let default_password_hash = hash_password(&default_password);
+        let default_password_hash = hash_password(&default_password)
+            .expect("Failed to hash default admin password — cannot start safely");
 
         let mut users = HashMap::new();
         users.insert(
@@ -290,9 +312,7 @@ impl AuthManager {
         )
         .map_err(|e| format!("Falha ao gerar token: {}", e))?;
 
-        self.sessions
-            .write()
-            .insert(token.clone(), payload);
+        self.sessions.write().insert(token.clone(), payload);
 
         Ok(LoginResponse {
             token,
@@ -344,21 +364,71 @@ impl AuthManager {
             .unwrap_or(false)
     }
 
+    /// Remove expired sessions and stale login attempt records to prevent
+    /// unbounded memory growth. Should be called periodically.
+    pub fn cleanup_expired(&self) {
+        let now = now_secs();
+
+        // Remove expired session tokens
+        let expired_sessions = {
+            let mut sessions = self.sessions.write();
+            let before = sessions.len();
+            sessions.retain(|_, payload| payload.exp as u64 > now);
+            before - sessions.len()
+        };
+
+        // Remove stale login attempt records outside their window
+        let expired_attempts = {
+            let mut attempts = self.login_attempts.write();
+            let before = attempts.len();
+            attempts
+                .retain(|_, record| now.saturating_sub(record.window_start) <= LOCKOUT_WINDOW_SECS);
+            before - attempts.len()
+        };
+
+        if expired_sessions > 0 || expired_attempts > 0 {
+            tracing::debug!(
+                "Auth cleanup: removed {} expired sessions, {} stale login records",
+                expired_sessions,
+                expired_attempts
+            );
+        }
+    }
+
     // ── gerenciamento de usuários ──────────────────────────────────────────
 
-    pub fn add_user(&self, username: String, password: String, role: UserRole) -> bool {
+    pub fn add_user(
+        &self,
+        username: String,
+        password: String,
+        role: UserRole,
+    ) -> Result<bool, String> {
+        // Validate username
+        if username.len() < 3 || username.len() > 32 {
+            return Err("Nome de usuário deve ter entre 3 e 32 caracteres".to_string());
+        }
+        if !username
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err("Nome de usuário deve conter apenas letras, números, _ ou -".to_string());
+        }
+        // Validate password complexity
+        validate_password(&password)?;
+
         let mut users = self.users.write();
         if users.contains_key(&username) {
-            return false;
+            return Ok(false);
         }
+        let password_hash = hash_password(&password)?;
         let user = User {
             username: username.clone(),
-            password_hash: hash_password(&password),
+            password_hash,
             role,
             created_at: now_secs() as i64,
         };
         users.insert(username, user);
-        true
+        Ok(true)
     }
 
     pub fn list_users(&self) -> Vec<UserInfo> {
@@ -382,13 +452,16 @@ impl AuthManager {
             .unwrap_or(false)
     }
 
-    pub fn change_password(&self, username: &str, new_password: &str) -> bool {
+    pub fn change_password(&self, username: &str, new_password: &str) -> Result<bool, String> {
+        // Validate password complexity
+        validate_password(new_password)?;
+
         let mut users = self.users.write();
         if let Some(user) = users.get_mut(username) {
-            user.password_hash = hash_password(new_password);
-            true
+            user.password_hash = hash_password(new_password)?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 }

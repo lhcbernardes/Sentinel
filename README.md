@@ -67,6 +67,9 @@ cp .env.example .env
 ```
 Make sure you replace `SENTINEL_JWT_SECRET` and `SENTINEL_ADMIN_PASSWORD` in your `.env` for production security!
 
+> **Default credentials:** `admin` / `Sentinel@2024`
+> Password requirements: min 8 chars, 1 uppercase, 1 digit, 1 special character.
+
 ### 3. Build & Run
 ```bash
 # Build binary
@@ -87,7 +90,7 @@ sudo -E cargo run
 | `DB_PATH` | `data/sentinel.db` | Directory path pointing to SQLite storage |
 | `LISTEN_ADDR` | `0.0.0.0:8080` | Port and address serving Axum HTTP server |
 | `SENTINEL_JWT_SECRET` | *Random Per Session* | Strong Base64 secret enforcing HS256 JWT tokens |
-| `SENTINEL_ADMIN_PASSWORD` | `admin123` | Master password for RBAC Administrator Access |
+| `SENTINEL_ADMIN_PASSWORD` | `Sentinel@2024` | Master password for RBAC Administrator Access (min 8 chars, 1 uppercase, 1 digit, 1 special) |
 | `SNIFFER_ENABLED` | `true` | Start backend packet tracking |
 | `FIREWALL_ENABLED`| `true` | Manipulate OS Firewall tables (iptables/pf) |
 | `DNS_ENABLED` | `false` | Turn on internal DNS resolution interception |

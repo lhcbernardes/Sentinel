@@ -22,7 +22,7 @@ services:
       # SENTINEL_JWT_SECRET: segredo para assinar tokens JWT (mín. 32 chars)
       # SENTINEL_ADMIN_PASSWORD: senha do usuário admin padrão
       - SENTINEL_JWT_SECRET=${SENTINEL_JWT_SECRET:?Defina SENTINEL_JWT_SECRET com no mínimo 32 caracteres}
-      - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD:-admin123}
+      - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD:-Sentinel@2024}
     volumes:
       - sentinel-data:/app/data
       - sentinel-logs:/app/logs

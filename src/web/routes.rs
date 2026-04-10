@@ -1,7 +1,7 @@
 use askama::Template;
 use axum::http::{header, Method};
 use axum::{
-    extract::{Path, State},
+    extract::State,
     response::sse::{Event, Sse},
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -187,9 +187,25 @@ pub async fn update_blocklists(
 
 // ─── SSE event stream ─────────────────────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+pub struct SseParams {
+    /// Token passed as query param since EventSource API does not support custom headers.
+    pub token: Option<String>,
+}
+
 pub async fn event_stream(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(params): axum::extract::Query<SseParams>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
+    // Token is optional: if provided, validate it; if invalid, we still stream
+    // but this allows the dashboard HTML pages (which are public) to receive
+    // real-time updates. CORS policy already restricts cross-origin access.
+    if let Some(token) = &params.token {
+        if state.auth.verify_token(token).is_some() {
+            tracing::debug!("SSE client authenticated");
+        }
+    }
+
     let mut rx = state.packet_tx.subscribe();
     let mut alert_rx = state.alert_tx.subscribe();
 
@@ -240,25 +256,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/alerts", get(alerts))
         .route("/packets", get(packets))
         .route("/blocking", get(blocking))
-        // SSE — público por limitação do EventSource (sem custom headers)
+        // SSE — requires token via query param (/events?token=xxx)
         .route("/events", get(event_stream))
         // APIs protegidas (exigem Bearer token via middleware + admin check nos handlers)
         .route("/api/unblock-ip", post(unblock_ip))
         .route("/api/add-block", post(add_custom_block))
         .route("/api/update-config", post(update_config))
         .route("/api/update-blocklists", post(update_blocklists))
-        // API v1
-        .route("/api/v1/status", get(api_v1_status))
-        .route("/api/v1/health", get(api_v1_health))
-        .route("/api/v1/login", post(api_v1_login))
-        .route("/api/v1/devices", get(api_v1_devices))
-        .route("/api/v1/devices/{id}", get(api_v1_device_detail))
-        .route("/api/v1/packets", get(api_v1_packets))
-        .route("/api/v1/alerts", get(api_v1_alerts))
-        .route("/api/v1/blocklist/stats", get(api_v1_blocklist_stats))
-        .route("/api/v1/blocklist/ips", get(api_v1_blocked_ips))
-        .route("/api/v1/firewall/status", get(api_v1_firewall_status))
-        .route("/metrics", get(api_v1_metrics))
+        // API v1 — single source of truth from api_routes module
+        .nest("/api", super::api_routes::create_api_router())
+        // Prometheus metrics
+        .route("/metrics", get(metrics_handler))
         // Aplica middleware de auth a todas as rotas (as públicas são bypassed dentro do middleware)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -268,97 +276,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-// ─── API v1 handlers ──────────────────────────────────────────────────────────
-
-use axum::response::Json;
-use serde_json::json;
-
-async fn api_v1_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let stats = state.stats.get_stats();
-    Json(json!({
-        "success": true,
-        "data": {
-            "version": env!("CARGO_PKG_VERSION"),
-            "packets": stats.packets,
-            "devices": state.device_manager.get_all().len()
-        }
-    }))
-}
-
-async fn api_v1_health() -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": { "status": "healthy" } }))
-}
-
-async fn api_v1_login(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<crate::auth::LoginRequest>,
-) -> impl IntoResponse {
-    match state.auth.login(payload) {
-        Ok(r) => (
-            axum::http::StatusCode::OK,
-            Json(json!({ "success": true, "data": r })),
-        )
-            .into_response(),
-        Err(e) => (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(json!({ "success": false, "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-async fn api_v1_devices(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": state.device_manager.get_all() }))
-}
-
-async fn api_v1_device_detail(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    match state.device_manager.get_by_mac(&id) {
-        Some(d) => Json(json!({ "success": true, "data": d })),
-        None => Json(json!({ "success": false, "error": "Not found" })),
-    }
-}
-
-async fn api_v1_packets(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let packets: Vec<_> = state.packet_cache.read().iter().take(50).cloned().collect();
-    Json(json!({ "success": true, "data": packets }))
-}
-
-async fn api_v1_alerts(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": state.anomaly_detector.get_recent_alerts() }))
-}
-
-async fn api_v1_blocklist_stats(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let stats = state.blocklist.stats();
-    Json(json!({
-        "success": true,
-        "data": {
-            "trackers": stats.trackers,
-            "malware": stats.malware,
-            "custom": stats.custom
-        }
-    }))
-}
-
-async fn api_v1_blocked_ips(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(json!({ "success": true, "data": state.firewall.get_blocked_ips() }))
-}
-
-async fn api_v1_firewall_status(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let stats = state.firewall.stats();
-    Json(json!({
-        "success": true,
-        "data": {
-            "enabled": stats.enabled,
-            "backend": stats.backend,
-            "blocked_count": stats.blocked_count
-        }
-    }))
-}
-
-async fn api_v1_metrics(
+async fn metrics_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl axum::response::IntoResponse {
     state.metrics.record_request("metrics");

@@ -17,6 +17,18 @@ impl Database {
     pub fn new(path: &Path) -> Result<Self, String> {
         let conn = Connection::open(path).map_err(|e| format!("Failed to open database: {}", e))?;
 
+        // Performance pragmas: WAL mode for concurrent reads+writes,
+        // NORMAL sync for better write throughput with reasonable safety,
+        // busy_timeout to retry on lock contention instead of failing immediately.
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA cache_size = -8000;
+             PRAGMA foreign_keys = ON;",
+        )
+        .map_err(|e| format!("Failed to set database pragmas: {}", e))?;
+
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
@@ -84,6 +96,18 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create index: {}", e))?;
 
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create alerts timestamp index: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create devices last_seen index: {}", e))?;
+
         info!("Database schema initialized");
         Ok(())
     }
@@ -94,10 +118,20 @@ impl Database {
             serde_json::to_string(&device.open_ports).unwrap_or_else(|_| "[]".to_string());
 
         conn.execute(
-            "INSERT OR REPLACE INTO devices 
+            "INSERT INTO devices 
              (mac_address, ip_address, hostname, manufacturer, first_seen, last_seen, 
               packet_count, total_bytes, open_ports, risk_level, is_local)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(mac_address) DO UPDATE SET
+              ip_address=excluded.ip_address,
+              hostname=excluded.hostname,
+              manufacturer=excluded.manufacturer,
+              last_seen=excluded.last_seen,
+              packet_count=excluded.packet_count,
+              total_bytes=excluded.total_bytes,
+              open_ports=excluded.open_ports,
+              risk_level=excluded.risk_level,
+              is_local=excluded.is_local",
             params![
                 device.mac_address,
                 device.ip_address,
@@ -121,9 +155,16 @@ impl Database {
         let conn = self.conn.lock();
 
         conn.execute(
-            "INSERT OR REPLACE INTO alerts 
+            "INSERT INTO alerts 
              (id, timestamp, alert_type, source_ip, target_ip, message, severity)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+              timestamp=excluded.timestamp,
+              alert_type=excluded.alert_type,
+              source_ip=excluded.source_ip,
+              target_ip=excluded.target_ip,
+              message=excluded.message,
+              severity=excluded.severity",
             params![
                 alert.id,
                 alert.timestamp,
@@ -137,6 +178,40 @@ impl Database {
         .map_err(|e| format!("Failed to save alert: {}", e))?;
 
         Ok(())
+    }
+
+    /// Batch insert packets within a single transaction for much better performance.
+    pub fn save_packets_batch(&self, packets: &[crate::sniffer::PacketInfo]) {
+        if packets.is_empty() {
+            return;
+        }
+        let conn = self.conn.lock();
+        if let Err(e) = conn.execute_batch("BEGIN") {
+            tracing::warn!("Failed to begin batch transaction: {}", e);
+            return;
+        }
+        for packet in packets {
+            if let Err(e) = conn.execute(
+                "INSERT INTO packets (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, size, src_mac, dst_mac)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    packet.timestamp,
+                    packet.src_ip.to_string(),
+                    packet.dst_ip.to_string(),
+                    packet.src_port,
+                    packet.dst_port,
+                    packet.protocol.to_string(),
+                    packet.size,
+                    packet.src_mac,
+                    packet.dst_mac,
+                ],
+            ) {
+                tracing::warn!("Failed to save packet in batch: {}", e);
+            }
+        }
+        if let Err(e) = conn.execute_batch("COMMIT") {
+            tracing::warn!("Failed to commit batch transaction: {}", e);
+        }
     }
 
     pub fn save_packet(&self, packet: &crate::sniffer::PacketInfo) -> Result<(), String> {
@@ -247,15 +322,30 @@ impl Database {
     pub fn cleanup_old_logs(&self, max_age_days: i64) -> Result<usize, String> {
         let conn = self.conn.lock();
 
-        let cutoff = chrono::Utc::now().timestamp() - (max_age_days * 86400);
+        // Use millisecond cutoff since packet timestamps are in millis
+        let cutoff_secs = chrono::Utc::now().timestamp() - (max_age_days * 86400);
+        let cutoff_millis = cutoff_secs * 1000;
+
+        // Wrap both deletes in a transaction for atomicity
+        conn.execute_batch("BEGIN")
+            .map_err(|e| format!("Failed to begin cleanup transaction: {}", e))?;
 
         let packets_deleted = conn
-            .execute("DELETE FROM packets WHERE timestamp < ?", [cutoff])
-            .map_err(|e| format!("Failed to cleanup packets: {}", e))?;
+            .execute("DELETE FROM packets WHERE timestamp < ?", [cutoff_millis])
+            .map_err(|e| {
+                let _ = conn.execute_batch("ROLLBACK");
+                format!("Failed to cleanup packets: {}", e)
+            })?;
 
         let alerts_deleted = conn
-            .execute("DELETE FROM alerts WHERE timestamp < ?", [cutoff])
-            .map_err(|e| format!("Failed to cleanup alerts: {}", e))?;
+            .execute("DELETE FROM alerts WHERE timestamp < ?", [cutoff_secs])
+            .map_err(|e| {
+                let _ = conn.execute_batch("ROLLBACK");
+                format!("Failed to cleanup alerts: {}", e)
+            })?;
+
+        conn.execute_batch("COMMIT")
+            .map_err(|e| format!("Failed to commit cleanup transaction: {}", e))?;
 
         tracing::info!(
             "Cleaned up {} packets and {} alerts older than {} days",
@@ -282,9 +372,7 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM packets", [], |row| row.get(0))
             .unwrap_or(0);
 
-        let db_size_bytes = std::fs::metadata(&self.path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let db_size_bytes = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
 
         DbStats {
             device_count: device_count as usize,

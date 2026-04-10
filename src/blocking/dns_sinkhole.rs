@@ -81,8 +81,8 @@ impl DnsSinkhole {
         loop {
             match socket.recv_from(&mut buf).await {
                 Ok((len, addr)) => {
-                    *self.query_count.write() += 1;
-                    let response = self.handle_query(&buf[..len]);
+                    // Pass client address to handle_query (no double-counting here)
+                    let response = self.handle_query(&buf[..len], &addr.ip().to_string());
                     if let Some(resp) = response {
                         let _ = socket.send_to(&resp, addr).await;
                     }
@@ -94,7 +94,7 @@ impl DnsSinkhole {
         }
     }
 
-    fn handle_query(&self, packet: &[u8]) -> Option<Vec<u8>> {
+    fn handle_query(&self, packet: &[u8], client_ip: &str) -> Option<Vec<u8>> {
         if packet.len() < 12 {
             return None;
         }
@@ -110,13 +110,17 @@ impl DnsSinkhole {
         let domain = self.extract_domain(packet)?;
         let domain_lower = domain.to_lowercase();
 
+        // Count query only once (removed duplicate from run_udp)
         *self.query_count.write() += 1;
 
         let is_blocked = self.blocklist.is_blocked(&domain_lower);
 
+        // Extract the question section from the original packet for inclusion in responses
+        let question_section = self.extract_question_section(packet);
+
         let record = DnsQueryRecord {
             timestamp: chrono::Utc::now().timestamp_millis(),
-            client_ip: "0.0.0.0".to_string(),
+            client_ip: client_ip.to_string(),
             domain: domain_lower.clone(),
             blocked: is_blocked,
             block_type: if is_blocked {
@@ -134,17 +138,17 @@ impl DnsSinkhole {
             log.push_back(record);
         }
 
-        tracing::debug!("DNS query for: {}", domain_lower);
+        tracing::debug!("DNS query for: {} from {}", domain_lower, client_ip);
 
         if is_blocked {
             *self.blocked_count.write() += 1;
-            tracing::info!("Blocked DNS query for: {}", domain_lower);
+            tracing::info!("Blocked DNS query for: {} from {}", domain_lower, client_ip);
 
-            return Some(self.create_nxdomain_response(id));
+            return Some(self.create_nxdomain_response(id, &question_section));
         }
 
         if self.allow_fallback {
-            return Some(self.create_localhost_response(id));
+            return Some(self.create_localhost_response(id, &question_section));
         }
 
         None
@@ -156,6 +160,13 @@ impl DnsSinkhole {
 
         while pos < packet.len() {
             let len = packet[pos] as usize;
+
+            // Check for DNS compression pointer (top 2 bits set)
+            if len & 0xC0 == 0xC0 {
+                // Compression pointer — skip it (2 bytes) and stop
+                break;
+            }
+
             if len == 0 {
                 break;
             }
@@ -179,28 +190,65 @@ impl DnsSinkhole {
         }
     }
 
-    fn create_nxdomain_response(&self, id: u16) -> Vec<u8> {
-        let mut response = Vec::with_capacity(32);
+    /// Extract the raw question section bytes from a DNS packet (everything from
+    /// byte 12 to the end of the first question: name + QTYPE(2) + QCLASS(2)).
+    fn extract_question_section(&self, packet: &[u8]) -> Vec<u8> {
+        let mut pos = 12;
+        while pos < packet.len() {
+            let len = packet[pos] as usize;
+            if len == 0 {
+                pos += 1; // skip the null terminator
+                break;
+            }
+            if len & 0xC0 == 0xC0 {
+                pos += 2; // skip compression pointer
+                break;
+            }
+            pos += len + 1;
+        }
+        // Include QTYPE (2 bytes) + QCLASS (2 bytes)
+        let end = (pos + 4).min(packet.len());
+        packet[12..end].to_vec()
+    }
 
-        response.extend_from_slice(&id.to_be_bytes());
-        response.extend_from_slice(&[0x81, 0x83]);
-        response.extend_from_slice(&[0x00, 0x01]);
-        response.extend_from_slice(&[0x00, 0x00]);
-        response.extend_from_slice(&[0x00, 0x00]);
-        response.extend_from_slice(&[0x00, 0x00]);
+    fn create_nxdomain_response(&self, id: u16, question: &[u8]) -> Vec<u8> {
+        let mut response = Vec::with_capacity(12 + question.len());
+
+        // Header
+        response.extend_from_slice(&id.to_be_bytes()); // Transaction ID
+        response.extend_from_slice(&[0x81, 0x83]); // Flags: QR=1, RD=1, RA=1, RCODE=3 (NXDOMAIN)
+        response.extend_from_slice(&[0x00, 0x01]); // QDCOUNT = 1
+        response.extend_from_slice(&[0x00, 0x00]); // ANCOUNT = 0
+        response.extend_from_slice(&[0x00, 0x00]); // NSCOUNT = 0
+        response.extend_from_slice(&[0x00, 0x00]); // ARCOUNT = 0
+
+        // Echo back the original question section
+        response.extend_from_slice(question);
 
         response
     }
 
-    fn create_localhost_response(&self, id: u16) -> Vec<u8> {
-        let mut response = Vec::with_capacity(32);
+    fn create_localhost_response(&self, id: u16, question: &[u8]) -> Vec<u8> {
+        let mut response = Vec::with_capacity(12 + question.len() + 16);
 
-        response.extend_from_slice(&id.to_be_bytes());
-        response.extend_from_slice(&[0x81, 0x80]);
-        response.extend_from_slice(&[0x00, 0x01]);
-        response.extend_from_slice(&[0x00, 0x01]);
-        response.extend_from_slice(&[0x00, 0x00]);
-        response.extend_from_slice(&[0x00, 0x00]);
+        // Header
+        response.extend_from_slice(&id.to_be_bytes()); // Transaction ID
+        response.extend_from_slice(&[0x81, 0x80]); // Flags: QR=1, RD=1, RA=1, RCODE=0 (NOERROR)
+        response.extend_from_slice(&[0x00, 0x01]); // QDCOUNT = 1
+        response.extend_from_slice(&[0x00, 0x01]); // ANCOUNT = 1
+        response.extend_from_slice(&[0x00, 0x00]); // NSCOUNT = 0
+        response.extend_from_slice(&[0x00, 0x00]); // ARCOUNT = 0
+
+        // Echo back the original question section
+        response.extend_from_slice(question);
+
+        // Answer section: point back to the name in the question (compression pointer 0xC00C)
+        response.extend_from_slice(&[0xC0, 0x0C]); // Name: pointer to offset 12 (question name)
+        response.extend_from_slice(&[0x00, 0x01]); // TYPE: A (1)
+        response.extend_from_slice(&[0x00, 0x01]); // CLASS: IN (1)
+        response.extend_from_slice(&[0x00, 0x00, 0x01, 0x2C]); // TTL: 300 seconds
+        response.extend_from_slice(&[0x00, 0x04]); // RDLENGTH: 4 bytes
+        response.extend_from_slice(&[127, 0, 0, 1]); // RDATA: 127.0.0.1
 
         response
     }

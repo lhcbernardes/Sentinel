@@ -15,7 +15,6 @@ fn validate_ip(ip: &str) -> Result<String, String> {
         .map_err(|_| format!("Endereço IP inválido: '{}'", ip))
 }
 
-
 #[derive(Clone)]
 pub enum FirewallBackend {
     Iptables,
@@ -154,32 +153,38 @@ impl FirewallManager {
                 }
             }
             FirewallBackend::Pf => {
-                // macOS pf rule
+                // macOS pf rule — use validated_ip to prevent command injection
                 if let Ok(output) = Command::new("pfctl")
-                    .args(["-k", "from", ip, "-k", "all"])
+                    .args(["-k", "from", &validated_ip, "-k", "all"])
                     .output()
                 {
                     if !output.status.success() {
-                        tracing::warn!("pfctl block warning for {}", ip);
+                        tracing::warn!("pfctl block warning for {}", validated_ip);
                     }
                 }
             }
             FirewallBackend::None => {
-                tracing::info!("Blocking {} (simulation only - platform not supported)", ip);
+                tracing::info!(
+                    "Blocking {} (simulation only - platform not supported)",
+                    validated_ip
+                );
             }
         }
 
-        self.blocklist.add_attacker(ip.to_string());
-        blocked.insert(ip.to_string());
-        tracing::info!("Blocked IP: {}", ip);
+        self.blocklist.add_attacker(validated_ip.clone());
+        blocked.insert(validated_ip.clone());
+        tracing::info!("Blocked IP: {}", validated_ip);
 
         Ok(())
     }
 
     pub fn unblock_ip(&self, ip: &str) -> Result<(), String> {
+        // Validate IP to prevent command injection (same as block_ip)
+        let validated_ip = validate_ip(ip)?;
+
         let mut blocked = self.blocked_ips.write();
 
-        if !blocked.contains(ip) {
+        if !blocked.contains(&validated_ip) {
             return Ok(());
         }
 
@@ -188,18 +193,18 @@ impl FirewallManager {
         match backend {
             FirewallBackend::Iptables => {
                 let _ = Command::new("iptables")
-                    .args(["-D", &self.chain_name, "-s", ip, "-j", "DROP"])
+                    .args(["-D", &self.chain_name, "-s", &validated_ip, "-j", "DROP"])
                     .output();
             }
             FirewallBackend::Pf => {
                 // pf doesn't have easy unblock, just remove from our list
-                tracing::info!("Unblocked {} (removed from tracking)", ip);
+                tracing::info!("Unblocked {} (removed from tracking)", validated_ip);
             }
             FirewallBackend::None => {}
         }
 
-        blocked.remove(ip);
-        tracing::info!("Unblocked IP: {}", ip);
+        blocked.remove(&validated_ip);
+        tracing::info!("Unblocked IP: {}", validated_ip);
 
         Ok(())
     }

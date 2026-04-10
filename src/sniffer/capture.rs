@@ -1,5 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::anomaly::AnomalyDetector;
 use crate::db::Database;
@@ -22,11 +24,53 @@ impl Sniffer {
         device_manager: Arc<DeviceManager>,
         anomaly_detector: Arc<AnomalyDetector>,
         database: Arc<Database>,
+        shutdown: Arc<AtomicBool>,
     ) {
         use pcap::{Capture, Device};
 
         let interface = self.interface.clone();
 
+        // Channel to decouple packet capture from database I/O
+        let (db_tx, db_rx) = std::sync::mpsc::sync_channel::<PacketInfo>(10_000);
+
+        // Database writer thread: batches inserts to reduce lock contention
+        let db_shutdown = shutdown.clone();
+        let db = database.clone();
+        std::thread::spawn(move || {
+            let mut batch = Vec::with_capacity(100);
+            loop {
+                if db_shutdown.load(Ordering::Relaxed) && db_rx.try_recv().is_err() {
+                    // Flush remaining
+                    if !batch.is_empty() {
+                        db.save_packets_batch(&batch);
+                    }
+                    break;
+                }
+
+                match db_rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(packet) => {
+                        batch.push(packet);
+                        // Drain any buffered packets without blocking
+                        while let Ok(p) = db_rx.try_recv() {
+                            batch.push(p);
+                            if batch.len() >= 100 {
+                                break;
+                            }
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+
+                if !batch.is_empty() {
+                    db.save_packets_batch(&batch);
+                    batch.clear();
+                }
+            }
+            tracing::info!("Database writer thread stopped");
+        });
+
+        // Packet capture thread
         std::thread::spawn(move || {
             tracing::info!("Starting sniffer on interface: {}", interface);
 
@@ -44,10 +88,27 @@ impl Sniffer {
                 interface
             };
 
-            let device = devices
-                .into_iter()
-                .find(|d| d.name == device_name)
-                .unwrap_or_else(|| Device::lookup().unwrap().unwrap());
+            let device = match devices.into_iter().find(|d| d.name == device_name) {
+                Some(d) => d,
+                None => match Device::lookup() {
+                    Ok(Some(d)) => {
+                        tracing::warn!(
+                            "Interface '{}' not found, falling back to default: {}",
+                            device_name,
+                            d.name
+                        );
+                        d
+                    }
+                    Ok(None) => {
+                        tracing::error!("No default network device available");
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to lookup default device: {}", e);
+                        return;
+                    }
+                },
+            };
 
             let cap = match Capture::from_device(device) {
                 Ok(c) => c,
@@ -68,13 +129,20 @@ impl Sniffer {
             tracing::info!("Capture opened successfully on {}", device_name);
 
             loop {
+                // Check for shutdown signal
+                if shutdown.load(Ordering::Relaxed) {
+                    tracing::info!("Sniffer received shutdown signal");
+                    break;
+                }
+
                 match active_cap.next_packet() {
                     Ok(packet) => {
                         if let Some(info) = parse_packet(packet.data) {
                             let _ = packet_tx.send(info.clone());
                             device_manager.process_packet(&info);
                             anomaly_detector.analyze(&info);
-                            let _ = database.save_packet(&info);
+                            // Send to DB writer thread (non-blocking: drop if full)
+                            let _ = db_tx.try_send(info);
                         }
                     }
                     Err(pcap::Error::TimeoutExpired) => {
@@ -85,6 +153,7 @@ impl Sniffer {
                     }
                 }
             }
+            tracing::info!("Sniffer thread stopped");
         });
     }
 }
@@ -115,9 +184,9 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
                 _ => (None, None, Protocol::from(proto)),
             };
 
-            let _header_len = 20u32;
-            let payload_len = 20u32;
-            (src, dst, sp, dp, proto_str, payload_len)
+            // Use actual total length from IP header instead of hardcoded value
+            let total_len = ipv4.header().total_len() as u32;
+            (src, dst, sp, dp, proto_str, total_len)
         }
         Some(NetSlice::Ipv6(ipv6)) => {
             let src = IpAddr::V6(Ipv6Addr::from(ipv6.header().source()));
@@ -139,9 +208,9 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
                 _ => (None, None, Protocol::from(proto)),
             };
 
-            let _header_len = 40u32;
-            let payload_len = 40u32;
-            (src, dst, sp, dp, proto_str, payload_len)
+            // IPv6: 40-byte header + payload_length
+            let total_len = 40 + ipv6.header().payload_length() as u32;
+            (src, dst, sp, dp, proto_str, total_len)
         }
         _ => return None,
     };

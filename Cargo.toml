@@ -11,7 +11,7 @@ keywords = ["security", "network", "monitor", "packet-capture", "firewall"]
 categories = ["network-programming", "security", "web-services"]
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util", "signal"] }
 axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "validate-request", "trace"] }
@@ -28,13 +28,10 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 parking_lot = "0.12"
-once_cell = "1"
 regex = "1"
 async-stream = "0.3"
 futures-util = "0.3"
-trust-dns-resolver = "0.23"
 ipnetwork = "0.20"
-cidr-utils = "0.5"
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "json"], default-features = false }
 base64 = "0.22"
 argon2 = "0.5"
