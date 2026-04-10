@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}Threat Intel - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="threatIntelManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Malicious IPs</div>
+            <div class="text-3xl font-bold text-cyber-danger" x-text="stats.malicious_ips">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Malicious Domains</div>
+            <div class="text-3xl font-bold text-cyber-danger" x-text="stats.malicious_domains">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Threat Feeds</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="stats.feeds_enabled">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-2">Auto-Block</div>
+            <span class="px-3 py-1 text-xs font-bold rounded-full"
+                :class="config.auto_block ? 'bg-cyber-success/20 text-cyber-success' : 'bg-gray-700 text-gray-400'"
+                x-text="config.auto_block ? 'Enabled' : 'Disabled'"></span>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl mb-6">
+        <div class="p-5 border-b border-gray-700/50">
+            <div class="flex flex-col sm:flex-row gap-4 justify-between">
+                <div class="relative flex-1 max-w-md">
+                    <input type="text" x-model="searchQuery" @keyup.enter="lookup()" 
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 pl-10 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono"
+                        placeholder="Enter IP or domain to lookup...">
+                    <svg class="absolute left-3 top-3 w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                </div>
+                <button @click="lookup()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-5 py-2.5 rounded-lg transition-all">
+                    Lookup
+                </button>
+            </div>
+        </div>
+        <div class="p-5">
+            <div x-show="lookupResult" class="mb-6 p-4 rounded-lg border"
+                :class="lookupResult.malicious ? 'bg-cyber-danger/10 border-cyber-danger/30' : 'bg-cyber-success/10 border-cyber-success/30'">
+                <div class="flex items-center gap-3 mb-3">
+                    <span class="text-2xl" x-text="lookupResult.malicious ? '⚠️' : '✓'"></span>
+                    <span class="font-semibold" :class="lookupResult.malicious ? 'text-cyber-danger' : 'text-cyber-success'"
+                        x-text="lookupResult.malicious ? 'Threat Detected' : 'Safe'"></span>
+                </div>
+                <div class="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <span class="text-gray-500">Indicator:</span>
+                        <span class="font-mono text-white ml-2" x-text="lookupResult.indicator"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Type:</span>
+                        <span class="text-white ml-2" x-text="lookupResult.type"></span>
+                    </div>
+                    <div x-show="lookupResult.threat_type">
+                        <span class="text-gray-500">Threat Type:</span>
+                        <span class="text-cyber-danger ml-2" x-text="lookupResult.threat_type"></span>
+                    </div>
+                    <div x-show="lookupResult.confidence">
+                        <span class="text-gray-500">Confidence:</span>
+                        <span class="text-cyber-warn ml-2" x-text="lookupResult.confidence + '%'"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl mb-6">
+        <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-white">Threat Intelligence Feeds</h2>
+            <button @click="updateFeeds()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-4 py-2 rounded-lg transition-all text-sm">
+                Update Feeds
+            </button>
+        </div>
+        <div class="divide-y divide-gray-700/30">
+            <div class="p-5 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-red-500/20 flex items-center justify-center text-red-400">🔴</div>
+                    <div>
+                        <span class="text-gray-300 font-medium">URLhaus</span>
+                        <p class="text-xs text-gray-500">Malware distribution URLs from abuse.ch</p>
+                    </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.feeds.urlhaus" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center text-orange-400">🟠</div>
+                    <div>
+                        <span class="text-gray-300 font-medium">Emerging Threats</span>
+                        <p class="text-xs text-gray-500">Community threat intelligence</p>
+                    </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.feeds.emerging_threats" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400">🔵</div>
+                    <div>
+                        <span class="text-gray-300 font-medium">AbuseIPDB</span>
+                        <p class="text-xs text-gray-500">IP reputation database (requires API key)</p>
+                    </div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.feeds.abuseipdb" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl">
+        <div class="p-5 border-b border-gray-700/50">
+            <h2 class="text-lg font-semibold text-white">Recent Lookups</h2>
+        </div>
+        <div class="divide-y divide-gray-700/30 max-h-[300px] overflow-y-auto">
+            <template x-for="lookup in lookupHistory" :key="lookup.timestamp">
+                <div class="p-4 flex items-center justify-between hover:bg-white/[0.02]">
+                    <div class="flex items-center gap-3">
+                        <span class="text-lg" x-text="lookup.malicious ? '⚠️' : '✓'"></span>
+                        <span class="font-mono text-sm text-gray-300" x-text="lookup.indicator"></span>
+                    </div>
+                    <span class="text-xs text-gray-500" x-text="formatTime(lookup.timestamp)"></span>
+                </div>
+            </template>
+            <template x-if="lookupHistory.length === 0">
+                <div class="p-8 text-center text-gray-500">No lookups performed yet</div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function threatIntelManager() {
+    return {
+        searchQuery: '',
+        lookupResult: null,
+        lookupHistory: [],
+        stats: { malicious_ips: 0, malicious_domains: 0, feeds_enabled: 0 },
+        config: {
+            auto_block: true,
+            feeds: { urlhaus: true, emerging_threats: false, abuseipdb: false }
+        },
+
+        async init() {
+            await this.loadStats();
+        },
+
+        async loadStats() {
+            try {
+                const response = await fetch('/api/v1/threatintel/stats', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.stats = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        },
+
+        async lookup() {
+            if (!this.searchQuery) return;
+            try {
+                const response = await fetch('/api/v1/threatintel/lookup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify({ indicator: this.searchQuery })
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.lookupResult = data.data;
+                    this.lookupHistory.unshift({ ...data.data, timestamp: new Date().toISOString() });
+                    if (this.lookupHistory.length > 20) this.lookupHistory.pop();
+                }
+            } catch (error) {
+                console.error('Lookup failed:', error);
+            }
+        },
+
+        async saveConfig() {
+            try {
+                await fetch('/api/v1/threatintel/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.config)
+                });
+            } catch (error) {
+                console.error('Failed to save config:', error);
+            }
+        },
+
+        async updateFeeds() {
+            try {
+                await fetch('/api/v1/threatintel/update', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                await this.loadStats();
+                alert('Feeds updated!');
+            } catch (error) {
+                console.error('Failed to update feeds:', error);
+            }
+        },
+
+        formatTime(timestamp) {
+            return new Date(timestamp).toLocaleString();
+        }
+    }
+}
+</script>
+{% endblock %}

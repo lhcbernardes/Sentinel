@@ -1,13 +1,14 @@
+use crossbeam_channel::{bounded, Sender};
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::env;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 
 use crate::blocking::blocklist::Blocklist;
 
-/// Valida e normaliza um endereço IP usando o parser da stdlib.
-/// Retorna o IP normalizado (ex: "::1" → "::1") ou um erro descritivo.
 fn validate_ip(ip: &str) -> Result<String, String> {
     let ip = ip.trim();
     ip.parse::<std::net::IpAddr>()
@@ -22,17 +23,43 @@ pub enum FirewallBackend {
     None,
 }
 
+enum FirewallCommand {
+    Block { ip: String },
+    Unblock { ip: String },
+    Shutdown,
+}
+
 pub struct FirewallManager {
+    #[allow(dead_code)]
     blocklist: Arc<Blocklist>,
     blocked_ips: RwLock<HashSet<String>>,
     chain_name: String,
     enabled: RwLock<bool>,
     backend: RwLock<FirewallBackend>,
+    cmd_tx: Sender<FirewallCommand>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl FirewallManager {
     pub fn new(blocklist: Arc<Blocklist>, chain_name: &str) -> Self {
         let backend = Self::detect_backend();
+        let (cmd_tx, cmd_rx) = bounded(1000);
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let chain_name_owned = chain_name.to_string();
+        let backend_clone = backend.clone();
+        let blocklist_clone = blocklist.clone();
+        let shutdown_clone = shutdown.clone();
+
+        thread::spawn(move || {
+            Self::worker_loop(
+                cmd_rx,
+                chain_name_owned,
+                backend_clone,
+                blocklist_clone,
+                shutdown_clone,
+            );
+        });
 
         Self {
             blocklist,
@@ -40,6 +67,85 @@ impl FirewallManager {
             chain_name: chain_name.to_string(),
             enabled: RwLock::new(false),
             backend: RwLock::new(backend),
+            cmd_tx,
+            shutdown,
+        }
+    }
+
+    fn worker_loop(
+        cmd_rx: crossbeam_channel::Receiver<FirewallCommand>,
+        chain_name: String,
+        backend: FirewallBackend,
+        blocklist: Arc<Blocklist>,
+        shutdown: Arc<AtomicBool>,
+    ) {
+        loop {
+            match cmd_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(FirewallCommand::Block { ip }) => {
+                    if !Self::execute_block(&chain_name, &backend, &ip) {
+                        tracing::warn!("Failed to block IP: {}", ip);
+                    } else {
+                        blocklist.add_attacker(ip.clone());
+                        tracing::info!("Blocked IP: {}", ip);
+                    }
+                }
+                Ok(FirewallCommand::Unblock { ip }) => {
+                    Self::execute_unblock(&chain_name, &backend, &ip);
+                    tracing::info!("Unblocked IP: {}", ip);
+                }
+                Ok(FirewallCommand::Shutdown) => break,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        tracing::info!("Firewall worker thread stopped");
+    }
+
+    fn execute_block(chain_name: &str, backend: &FirewallBackend, ip: &str) -> bool {
+        match backend {
+            FirewallBackend::Iptables => Command::new("iptables")
+                .args([
+                    "-A",
+                    chain_name,
+                    "-s",
+                    ip,
+                    "-j",
+                    "DROP",
+                    "-m",
+                    "comment",
+                    "--comment",
+                    "Sentinel-RS blocked",
+                ])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
+            FirewallBackend::Pf => Command::new("pfctl")
+                .args(["-k", "from", ip, "-k", "all"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
+            FirewallBackend::None => {
+                tracing::info!("Blocking {} (simulation only)", ip);
+                true
+            }
+        }
+    }
+
+    fn execute_unblock(chain_name: &str, backend: &FirewallBackend, ip: &str) {
+        match backend {
+            FirewallBackend::Iptables => {
+                let _ = Command::new("iptables")
+                    .args(["-D", chain_name, "-s", ip, "-j", "DROP"])
+                    .output();
+            }
+            FirewallBackend::Pf => {
+                tracing::info!("Unblocked {} (pf - removed from tracking)", ip);
+            }
+            FirewallBackend::None => {}
         }
     }
 
@@ -100,11 +206,8 @@ impl FirewallManager {
     }
 
     fn init_pf(&self) -> Result<(), String> {
-        // macOS uses pf (Packet Filter)
-        // Create anchor for Sentinel-RS rules
         let _chain = &self.chain_name;
 
-        // Check if pf is enabled
         let status = Command::new("pfctl").args(["-s", "all"]).output();
 
         if status.is_err() {
@@ -118,93 +221,37 @@ impl FirewallManager {
     }
 
     pub fn block_ip(&self, ip: &str) -> Result<(), String> {
-        // Validate IP to prevent command injection
         let validated_ip = validate_ip(ip)?;
 
-        let mut blocked = self.blocked_ips.write();
-
-        if blocked.contains(&validated_ip) {
-            return Ok(());
+        {
+            let mut blocked = self.blocked_ips.write();
+            if blocked.contains(&validated_ip) {
+                return Ok(());
+            }
+            blocked.insert(validated_ip.clone());
         }
 
-        let backend = self.backend.read().clone();
-
-        match backend {
-            FirewallBackend::Iptables => {
-                let output = Command::new("iptables")
-                    .args([
-                        "-A",
-                        &self.chain_name,
-                        "-s",
-                        &validated_ip,
-                        "-j",
-                        "DROP",
-                        "-m",
-                        "comment",
-                        "--comment",
-                        "Sentinel-RS blocked",
-                    ])
-                    .output()
-                    .map_err(|e| format!("Failed to execute iptables: {}", e))?;
-
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(format!("iptables error: {}", stderr));
-                }
-            }
-            FirewallBackend::Pf => {
-                // macOS pf rule — use validated_ip to prevent command injection
-                if let Ok(output) = Command::new("pfctl")
-                    .args(["-k", "from", &validated_ip, "-k", "all"])
-                    .output()
-                {
-                    if !output.status.success() {
-                        tracing::warn!("pfctl block warning for {}", validated_ip);
-                    }
-                }
-            }
-            FirewallBackend::None => {
-                tracing::info!(
-                    "Blocking {} (simulation only - platform not supported)",
-                    validated_ip
-                );
-            }
-        }
-
-        self.blocklist.add_attacker(validated_ip.clone());
-        blocked.insert(validated_ip.clone());
-        tracing::info!("Blocked IP: {}", validated_ip);
+        let _ = self
+            .cmd_tx
+            .try_send(FirewallCommand::Block { ip: validated_ip });
 
         Ok(())
     }
 
     pub fn unblock_ip(&self, ip: &str) -> Result<(), String> {
-        // Validate IP to prevent command injection (same as block_ip)
         let validated_ip = validate_ip(ip)?;
 
-        let mut blocked = self.blocked_ips.write();
-
-        if !blocked.contains(&validated_ip) {
-            return Ok(());
+        {
+            let mut blocked = self.blocked_ips.write();
+            if !blocked.contains(&validated_ip) {
+                return Ok(());
+            }
+            blocked.remove(&validated_ip);
         }
 
-        let backend = self.backend.read().clone();
-
-        match backend {
-            FirewallBackend::Iptables => {
-                let _ = Command::new("iptables")
-                    .args(["-D", &self.chain_name, "-s", &validated_ip, "-j", "DROP"])
-                    .output();
-            }
-            FirewallBackend::Pf => {
-                // pf doesn't have easy unblock, just remove from our list
-                tracing::info!("Unblocked {} (removed from tracking)", validated_ip);
-            }
-            FirewallBackend::None => {}
-        }
-
-        blocked.remove(&validated_ip);
-        tracing::info!("Unblocked IP: {}", validated_ip);
+        let _ = self
+            .cmd_tx
+            .try_send(FirewallCommand::Unblock { ip: validated_ip });
 
         Ok(())
     }
@@ -244,7 +291,7 @@ impl FirewallManager {
         }
     }
 
-    pub fn cleanup(&self) {
+    fn cleanup_sync(&self) {
         let backend = self.backend.read().clone();
 
         match backend {
@@ -259,20 +306,26 @@ impl FirewallManager {
                     .args(["-X", &self.chain_name])
                     .output();
             }
-            FirewallBackend::Pf => {
-                // pf doesn't need cleanup for our simple rules
-            }
+            FirewallBackend::Pf => {}
             FirewallBackend::None => {}
         }
 
         *self.enabled.write() = false;
+    }
+
+    pub fn cleanup(&self) {
+        self.cleanup_sync();
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = self.cmd_tx.send(FirewallCommand::Shutdown);
         tracing::info!("Firewall manager cleaned up");
     }
 }
 
 impl Drop for FirewallManager {
     fn drop(&mut self) {
-        self.cleanup();
+        self.cleanup_sync();
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = self.cmd_tx.send(FirewallCommand::Shutdown);
     }
 }
 

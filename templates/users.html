@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - Sentinel-RS{% endblock %}
+
+{% block extra_head %}
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div x-data="userManagement()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+            <div class="absolute inset-0 bg-gradient-to-br from-cyber-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div class="flex flex-col relative z-10">
+                <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="total_users">Total Users</div>
+                <div class="text-3xl font-bold tracking-tight text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" x-text="stats.total"></div>
+            </div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+            <div class="absolute inset-0 bg-gradient-to-br from-cyber-accent/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div class="flex flex-col relative z-10">
+                <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="admins">Admins</div>
+                <div class="text-3xl font-bold tracking-tight text-cyber-accent drop-shadow-[0_0_12px_rgba(139,92,246,0.4)]" x-text="stats.admins"></div>
+            </div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5 relative overflow-hidden group">
+            <div class="absolute inset-0 bg-gradient-to-br from-cyber-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div class="flex flex-col relative z-10">
+                <div class="text-gray-400 text-sm font-medium tracking-wide mb-1" data-i18n="viewers">Viewers</div>
+                <div class="text-3xl font-bold tracking-tight text-cyber-primary drop-shadow-[0_0_12px_rgba(6,182,212,0.4)]" x-text="stats.viewers"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-700/50 bg-gray-900/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <h2 class="font-semibold text-lg text-gray-100" data-i18n="user_list">User List</h2>
+            <button @click="openCreateModal()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-5 py-2 rounded-lg shadow-[0_4px_15px_rgba(6,182,212,0.25)] hover:shadow-[0_4px_20px_rgba(6,182,212,0.4)] transition-all text-sm flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                <span data-i18n="create_user">Create User</span>
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-900/50">
+                    <tr>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider" data-i18n="username">Username</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider" data-i18n="role">Role</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider" data-i18n="created_at">Created At</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider" data-i18n="last_login">Last Login</th>
+                        <th class="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider" data-i18n="actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700/50">
+                    <template x-for="user in users" :key="user.username">
+                        <tr class="hover:bg-white/[0.02] transition-colors">
+                            <td class="px-5 py-4">
+                                <span class="font-medium text-gray-200" x-text="user.username"></span>
+                            </td>
+                            <td class="px-5 py-4">
+                                <span class="px-3 py-1 rounded text-xs font-bold uppercase tracking-wider"
+                                      :class="user.role === 'admin' ? 'bg-cyber-accent/20 text-cyber-accent border border-cyber-accent/30 shadow-[0_0_10px_rgba(139,92,246,0.2)]' : 'bg-cyber-primary/20 text-cyber-primary border border-cyber-primary/30 shadow-[0_0_10px_rgba(6,182,212,0.2)]'"
+                                      x-text="user.role"></span>
+                            </td>
+                            <td class="px-5 py-4 text-sm text-gray-400" x-text="formatDate(user.created_at)"></td>
+                            <td class="px-5 py-4 text-sm text-gray-400" x-text="user.last_login ? formatDate(user.last_login) : '-'"></td>
+                            <td class="px-5 py-4">
+                                <div class="flex items-center gap-2">
+                                    <button @click="openEditModal(user)" class="text-xs font-semibold px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-cyber-primary/20 transition-all border border-transparent hover:border-cyber-primary/30">
+                                        <span data-i18n="edit">Edit</span>
+                                    </button>
+                                    <button @click="openPasswordModal(user)" class="text-xs font-semibold px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-cyber-warn/20 transition-all border border-transparent hover:border-cyber-warn/30">
+                                        <span data-i18n="reset_password">Reset Password</span>
+                                    </button>
+                                    <button @click="openDeleteModal(user)" class="text-xs font-semibold px-3 py-1.5 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-cyber-danger/20 transition-all border border-transparent hover:border-cyber-danger/30">
+                                        <span data-i18n="delete">Delete</span>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="users.length === 0">
+                        <td colspan="5" class="px-5 py-12 text-center text-gray-500">
+                            <svg class="w-12 h-12 mx-auto mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                            </svg>
+                            <div data-i18n="no_users">No users found</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div x-show="showCreateModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity bg-black/70 backdrop-blur-sm" @click="showCreateModal = false"></div>
+            <div class="inline-block align-bottom glass-panel rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100">
+                <div class="px-6 py-4 border-b border-gray-700/50 bg-gray-900/30">
+                    <h3 class="text-lg font-semibold text-gray-100" data-i18n="create_new_user">Create New User</h3>
+                </div>
+                <form @submit.prevent="createUser()" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="username">Username</label>
+                        <input type="text" x-model="createForm.username" required class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary focus:ring-1 focus:ring-cyber-primary/50 transition-all" :placeholder="i18n.t('enter_username')">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="password">Password</label>
+                        <input type="password" x-model="createForm.password" required class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary focus:ring-1 focus:ring-cyber-primary/50 transition-all" :placeholder="i18n.t('enter_password')">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="role">Role</label>
+                        <select x-model="createForm.role" required class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary focus:ring-1 focus:ring-cyber-primary/50 transition-all">
+                            <option value="viewer" data-i18n="viewer">Viewer</option>
+                            <option value="admin" data-i18n="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button type="button" @click="showCreateModal = false" class="px-5 py-2.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-all text-sm font-medium" data-i18n="cancel">Cancel</button>
+                        <button type="submit" class="px-5 py-2.5 rounded-lg bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold shadow-[0_4px_15px_rgba(6,182,212,0.25)] transition-all text-sm" data-i18n="create">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showEditModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity bg-black/70 backdrop-blur-sm" @click="showEditModal = false"></div>
+            <div class="inline-block align-bottom glass-panel rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100">
+                <div class="px-6 py-4 border-b border-gray-700/50 bg-gray-900/30">
+                    <h3 class="text-lg font-semibold text-gray-100" data-i18n="edit_user">Edit User</h3>
+                </div>
+                <form @submit.prevent="updateUser()" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="username">Username</label>
+                        <input type="text" x-model="editForm.username" disabled class="w-full bg-gray-800/60 text-gray-500 px-4 py-2.5 rounded-lg border border-gray-700/50 cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="role">Role</label>
+                        <select x-model="editForm.role" required class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary focus:ring-1 focus:ring-cyber-primary/50 transition-all">
+                            <option value="viewer" data-i18n="viewer">Viewer</option>
+                            <option value="admin" data-i18n="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button type="button" @click="showEditModal = false" class="px-5 py-2.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-all text-sm font-medium" data-i18n="cancel">Cancel</button>
+                        <button type="submit" class="px-5 py-2.5 rounded-lg bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold shadow-[0_4px_15px_rgba(6,182,212,0.25)] transition-all text-sm" data-i18n="save">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showPasswordModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity bg-black/70 backdrop-blur-sm" @click="showPasswordModal = false"></div>
+            <div class="inline-block align-bottom glass-panel rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg w-full" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100">
+                <div class="px-6 py-4 border-b border-gray-700/50 bg-gray-900/30">
+                    <h3 class="text-lg font-semibold text-gray-100" data-i18n="reset_password">Reset Password</h3>
+                </div>
+                <form @submit.prevent="resetPassword()" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="username">Username</label>
+                        <input type="text" x-model="passwordForm.username" disabled class="w-full bg-gray-800/60 text-gray-500 px-4 py-2.5 rounded-lg border border-gray-700/50 cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2" data-i18n="new_password">New Password</label>
+                        <input type="password" x-model="passwordForm.new_password" required class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary focus:ring-1 focus:ring-cyber-primary/50 transition-all" :placeholder="i18n.t('enter_new_password')">
+                    </div>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <button type="button" @click="showPasswordModal = false" class="px-5 py-2.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-all text-sm font-medium" data-i18n="cancel">Cancel</button>
+                        <button type="submit" class="px-5 py-2.5 rounded-lg bg-cyber-warn/80 hover:bg-cyber-warn text-white font-semibold shadow-[0_4px_15px_rgba(245,158,11,0.25)] transition-all text-sm" data-i18n="reset">Reset</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity bg-black/70 backdrop-blur-sm" @click="showDeleteModal = false"></div>
+            <div class="inline-block align-bottom glass-panel rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:align-middle sm:max-w-md w-full" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95" x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100">
+                <div class="p-6">
+                    <div class="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-cyber-danger/20">
+                        <svg class="w-6 h-6 text-cyber-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-semibold text-gray-100 text-center mb-2" data-i18n="delete_user">Delete User</h3>
+                    <p class="text-gray-400 text-center mb-6">
+                        <span data-i18n="confirm_delete">Are you sure you want to delete user</span> <span class="font-semibold text-white" x-text="deleteForm.username"></span>?
+                    </p>
+                    <div class="flex justify-center gap-3">
+                        <button @click="showDeleteModal = false" class="px-5 py-2.5 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-all text-sm font-medium" data-i18n="cancel">Cancel</button>
+                        <button @click="deleteUser()" class="px-5 py-2.5 rounded-lg bg-cyber-danger/80 hover:bg-cyber-danger text-white font-semibold shadow-[0_4px_15px_rgba(239,68,68,0.25)] transition-all text-sm" data-i18n="delete">Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="notification.show" x-cloak class="fixed bottom-6 right-6 z-50" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-4">
+        <div class="glass-panel rounded-xl px-5 py-3 shadow-lg border" :class="notification.type === 'error' ? 'border-cyber-danger/50 bg-cyber-danger/10' : 'border-cyber-success/50 bg-cyber-success/10'">
+            <div class="flex items-center gap-3">
+                <span class="w-2 h-2 rounded-full" :class="notification.type === 'error' ? 'bg-cyber-danger shadow-[0_0_8px_#ef4444]' : 'bg-cyber-success shadow-[0_0_8px_#10b981]'"></span>
+                <span class="text-sm font-medium" :class="notification.type === 'error' ? 'text-cyber-danger' : 'text-cyber-success'" x-text="notification.message"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function userManagement() {
+    return {
+        users: [],
+        stats: { total: 0, admins: 0, viewers: 0 },
+        showCreateModal: false,
+        showEditModal: false,
+        showPasswordModal: false,
+        showDeleteModal: false,
+        createForm: { username: '', password: '', role: 'viewer' },
+        editForm: { username: '', role: '' },
+        passwordForm: { username: '', new_password: '' },
+        deleteForm: { username: '' },
+        notification: { show: false, message: '', type: 'success' },
+        authToken: localStorage.getItem('sentinel_token') || '',
+        
+        init() {
+            this.loadUsers();
+        },
+        
+        async loadUsers() {
+            try {
+                const res = await fetch('/api/v1/users', {
+                    headers: { 'Authorization': 'Bearer ' + this.authToken }
+                });
+                if (!res.ok) throw new Error('Failed to load users');
+                this.users = await res.json();
+                this.updateStats();
+            } catch (err) {
+                this.showNotification('Error loading users: ' + err.message, 'error');
+            }
+        },
+        
+        updateStats() {
+            this.stats = {
+                total: this.users.length,
+                admins: this.users.filter(u => u.role === 'admin').length,
+                viewers: this.users.filter(u => u.role === 'viewer').length
+            };
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+        
+        openCreateModal() {
+            this.createForm = { username: '', password: '', role: 'viewer' };
+            this.showCreateModal = true;
+        },
+        
+        openEditModal(user) {
+            this.editForm = { username: user.username, role: user.role };
+            this.showEditModal = true;
+        },
+        
+        openPasswordModal(user) {
+            this.passwordForm = { username: user.username, new_password: '' };
+            this.showPasswordModal = true;
+        },
+        
+        openDeleteModal(user) {
+            this.deleteForm = { username: user.username };
+            this.showDeleteModal = true;
+        },
+        
+        async createUser() {
+            try {
+                const res = await fetch('/api/v1/users', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + this.authToken
+                    },
+                    body: JSON.stringify(this.createForm)
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.message || 'Failed to create user');
+                }
+                this.showCreateModal = false;
+                await this.loadUsers();
+                this.showNotification(i18n.t('user_created'), 'success');
+            } catch (err) {
+                this.showNotification(err.message, 'error');
+            }
+        },
+        
+        async updateUser() {
+            try {
+                const res = await fetch('/api/v1/users/' + this.editForm.username, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + this.authToken
+                    },
+                    body: JSON.stringify({ role: this.editForm.role })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.message || 'Failed to update user');
+                }
+                this.showEditModal = false;
+                await this.loadUsers();
+                this.showNotification(i18n.t('user_updated'), 'success');
+            } catch (err) {
+                this.showNotification(err.message, 'error');
+            }
+        },
+        
+        async resetPassword() {
+            try {
+                const res = await fetch('/api/v1/users/' + this.passwordForm.username + '/password', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + this.authToken
+                    },
+                    body: JSON.stringify({ password: this.passwordForm.new_password })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.message || 'Failed to reset password');
+                }
+                this.showPasswordModal = false;
+                this.showNotification(i18n.t('password_reset'), 'success');
+            } catch (err) {
+                this.showNotification(err.message, 'error');
+            }
+        },
+        
+        async deleteUser() {
+            try {
+                const res = await fetch('/api/v1/users/' + this.deleteForm.username, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + this.authToken }
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.message || 'Failed to delete user');
+                }
+                this.showDeleteModal = false;
+                await this.loadUsers();
+                this.showNotification(i18n.t('user_deleted'), 'success');
+            } catch (err) {
+                this.showNotification(err.message, 'error');
+            }
+        },
+        
+        showNotification(message, type) {
+            this.notification = { show: true, message, type };
+            setTimeout(() => { this.notification.show = false; }, 3000);
+        }
+    };
+}
+</script>
+{% endblock %}

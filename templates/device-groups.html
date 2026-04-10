@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block title %}Device Groups - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="deviceGroupsManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+        <template x-for="group in groups" :key="group.id">
+            <div class="glass-panel hover-glass rounded-xl p-5">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-2xl" x-text="group.icon"></span>
+                    <span class="text-sm font-medium text-gray-300" x-text="group.name"></span>
+                </div>
+                <div class="text-2xl font-bold text-white" x-text="group.devices.length"></div>
+                <div class="text-xs text-gray-500 mt-1">devices</div>
+            </div>
+        </template>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <template x-for="group in groups" :key="group.id">
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xl" x-text="group.icon"></span>
+                        <h3 class="font-semibold text-white" x-text="group.name"></h3>
+                    </div>
+                    <span class="text-xs px-2 py-1 rounded-full" :class="getGroupBadgeClass(group.id)" x-text="group.id"></span>
+                </div>
+                <div class="p-4">
+                    <div class="flex flex-wrap gap-2 mb-4">
+                        <template x-for="device in group.devices" :key="device.mac">
+                            <div class="flex items-center gap-2 px-3 py-2 bg-gray-900/50 rounded-lg border border-gray-700/30 group">
+                                <div class="w-2 h-2 rounded-full" :class="device.is_online ? 'bg-cyber-success' : 'bg-gray-600'"></div>
+                                <span class="text-sm font-mono text-gray-300" x-text="device.ip || device.mac.substring(0,8)"></span>
+                                <button @click="removeDevice(group.id, device)" class="text-gray-600 hover:text-cyber-danger transition-colors opacity-0 group-hover:opacity-100">×</button>
+                            </div>
+                        </template>
+                        <template x-if="group.devices.length === 0">
+                            <span class="text-xs text-gray-600">No devices assigned</span>
+                        </template>
+                    </div>
+                    <div class="flex gap-2">
+                        <select x-model="group.newDevice" class="flex-1 bg-gray-900/60 text-white px-3 py-2 rounded-lg border border-gray-700/50 text-sm">
+                            <option value="">Select device...</option>
+                            <template x-for="device in availableDevices" :key="device.mac">
+                                <option :value="device.mac" x-text="device.ip || device.mac.substring(0,8)"></option>
+                            </template>
+                        </select>
+                        <button @click="addDevice(group.id)" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white px-3 py-2 rounded-lg transition-all text-sm">
+                            Add
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div class="glass-panel rounded-xl mt-6">
+        <div class="p-5 border-b border-gray-700/50">
+            <h2 class="text-lg font-semibold text-white">Group Policies</h2>
+        </div>
+        <div class="p-5">
+            <div class="space-y-4">
+                <template x-for="group in groups" :key="group.id">
+                    <div class="p-4 bg-gray-900/40 rounded-lg">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center gap-2">
+                                <span class="text-lg" x-text="group.icon"></span>
+                                <span class="font-medium text-white" x-text="group.name"></span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="group.policies.block_trackers" class="w-4 h-4 accent-cyber-primary">
+                                <span class="text-sm text-gray-300">Block Trackers</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="group.policies.block_malware" class="w-4 h-4 accent-cyber-danger">
+                                <span class="text-sm text-gray-300">Block Malware</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="group.policies.block_adult" class="w-4 h-4 accent-cyber-danger">
+                                <span class="text-sm text-gray-300">Block Adult</span>
+                            </label>
+                            <label class="flex items-center gap-2">
+                                <input type="checkbox" x-model="group.policies.allow_internet" class="w-4 h-4 accent-cyber-success">
+                                <span class="text-sm text-gray-300">Allow Internet</span>
+                            </label>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button @click="savePolicies()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-5 py-2 rounded-lg transition-all">
+                    Save Policies
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function deviceGroupsManager() {
+    return {
+        groups: [
+            { id: 'trusted', name: 'Trusted', icon: '🛡️', devices: [], policies: { block_trackers: false, block_malware: true, block_adult: false, allow_internet: true }, newDevice: '' },
+            { id: 'kids', name: 'Kids', icon: '👶', devices: [], policies: { block_trackers: true, block_malware: true, block_adult: true, allow_internet: true }, newDevice: '' },
+            { id: 'guests', name: 'Guests', icon: '👥', devices: [], policies: { block_trackers: true, block_malware: true, block_adult: false, allow_internet: true }, newDevice: '' },
+            { id: 'iot', name: 'IoT', icon: '📡', devices: [], policies: { block_trackers: true, block_malware: true, block_adult: false, allow_internet: true }, newDevice: '' },
+            { id: 'default', name: 'Default', icon: '⚙️', devices: [], policies: { block_trackers: true, block_malware: true, block_adult: false, allow_internet: true }, newDevice: '' }
+        ],
+        allDevices: [],
+
+        async init() {
+            await this.loadDevices();
+            await this.loadGroups();
+        },
+
+        async loadDevices() {
+            try {
+                const response = await fetch('/api/v1/devices');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.allDevices = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load devices:', error);
+            }
+        },
+
+        async loadGroups() {
+            try {
+                const response = await fetch('/api/v1/device-groups', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    data.data.forEach(g => {
+                        const group = this.groups.find(gr => gr.id === g.id);
+                        if (group) {
+                            group.devices = g.devices || [];
+                            group.policies = { ...group.policies, ...g.policies };
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load groups:', error);
+            }
+        },
+
+        get availableDevices() {
+            const assigned = this.groups.flatMap(g => g.devices.map(d => d.mac));
+            return this.allDevices.filter(d => !assigned.includes(d.mac));
+        },
+
+        async addDevice(groupId) {
+            const group = this.groups.find(g => g.id === groupId);
+            if (!group || !group.newDevice) return;
+            const device = this.allDevices.find(d => d.mac === group.newDevice);
+            if (device) {
+                group.devices.push(device);
+                group.newDevice = '';
+                await this.saveGroups();
+            }
+        },
+
+        async removeDevice(groupId, device) {
+            const group = this.groups.find(g => g.id === groupId);
+            if (group) {
+                group.devices = group.devices.filter(d => d.mac !== device.mac);
+                await this.saveGroups();
+            }
+        },
+
+        async saveGroups() {
+            try {
+                const payload = this.groups.map(g => ({
+                    id: g.id,
+                    devices: g.devices.map(d => d.mac)
+                }));
+                await fetch('/api/v1/device-groups', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(payload)
+                });
+            } catch (error) {
+                console.error('Failed to save groups:', error);
+            }
+        },
+
+        async savePolicies() {
+            try {
+                const payload = this.groups.map(g => ({
+                    id: g.id,
+                    policies: g.policies
+                }));
+                await fetch('/api/v1/device-groups/policies', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(payload)
+                });
+                alert('Policies saved!');
+            } catch (error) {
+                console.error('Failed to save policies:', error);
+            }
+        },
+
+        getGroupBadgeClass(id) {
+            const classes = {
+                trusted: 'bg-cyber-success/20 text-cyber-success',
+                kids: 'bg-pink-500/20 text-pink-400',
+                guests: 'bg-blue-500/20 text-blue-400',
+                iot: 'bg-cyber-warn/20 text-cyber-warn',
+                default: 'bg-gray-700/50 text-gray-400'
+            };
+            return classes[id] || classes.default;
+        }
+    }
+}
+</script>
+{% endblock %}

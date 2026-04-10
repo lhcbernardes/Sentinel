@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}ML Baselines - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="mlBaselinesManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Device Baselines</div>
+            <div class="text-3xl font-bold text-white" x-text="baselines.length">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Anomalies Detected</div>
+            <div class="text-3xl font-bold text-cyber-danger" x-text="stats.anomalies">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Learning Phase</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="learningPhase"></div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-2">ML Status</div>
+            <span class="px-3 py-1 text-xs font-bold rounded-full"
+                :class="mlEnabled ? 'bg-cyber-success/20 text-cyber-success' : 'bg-gray-700 text-gray-400'"
+                x-text="mlEnabled ? 'Active' : 'Disabled'"></span>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl mb-6">
+        <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-white">Device Traffic Baselines</h2>
+            <button @click="refreshBaselines()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg transition-all text-sm font-medium flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Refresh
+            </button>
+        </div>
+        <div class="divide-y divide-gray-700/30 max-h-[500px] overflow-y-auto">
+            <template x-for="baseline in baselines" :key="baseline.device_id">
+                <div class="p-5 hover:bg-white/[0.02] transition-colors">
+                    <div class="flex items-start justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-lg bg-cyber-primary/10 flex items-center justify-center">
+                                <svg class="w-5 h-5 text-cyber-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-medium text-white" x-text="baseline.device_id"></div>
+                                <div class="text-xs text-gray-500">
+                                    Learned: <span x-text="formatTime(baseline.learned_at)"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button @click="viewBaseline(baseline)" class="text-cyber-primary hover:text-white transition-colors text-sm font-medium">
+                                View Details
+                            </button>
+                            <span class="text-gray-700">|</span>
+                            <button @click="resetBaseline(baseline)" class="text-cyber-warn hover:text-white transition-colors text-sm font-medium">
+                                Reset
+                            </button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-4 gap-4">
+                        <div class="bg-gray-900/40 rounded-lg p-3">
+                            <div class="text-xs text-gray-500 mb-1">Avg Traffic</div>
+                            <div class="text-lg font-semibold text-white" x-text="formatBytes(baseline.avg_traffic) + '/s'"></div>
+                        </div>
+                        <div class="bg-gray-900/40 rounded-lg p-3">
+                            <div class="text-xs text-gray-500 mb-1">Peak Traffic</div>
+                            <div class="text-lg font-semibold text-cyber-warn" x-text="formatBytes(baseline.peak_traffic) + '/s'"></div>
+                        </div>
+                        <div class="bg-gray-900/40 rounded-lg p-3">
+                            <div class="text-xs text-gray-500 mb-1">Connections</div>
+                            <div class="text-lg font-semibold text-cyber-primary" x-text="baseline.avg_connections"></div>
+                        </div>
+                        <div class="bg-gray-900/40 rounded-lg p-3">
+                            <div class="text-xs text-gray-500 mb-1">Sensitivity</div>
+                            <div class="text-lg font-semibold text-gray-300" x-text="baseline.sensitivity + '%'"></div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <template x-if="baselines.length === 0">
+                <div class="p-12 text-center text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                    <p>No baselines learned yet</p>
+                    <p class="text-sm mt-1">ML learning is active - baselines will appear as devices are monitored</p>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl">
+        <div class="p-5 border-b border-gray-700/50">
+            <h2 class="text-lg font-semibold text-white">Recent Anomalies</h2>
+        </div>
+        <div class="divide-y divide-gray-700/30 max-h-[300px] overflow-y-auto">
+            <template x-for="anomaly in anomalies" :key="anomaly.id">
+                <div class="p-4 flex items-center gap-4 hover:bg-white/[0.02]">
+                    <span class="text-2xl" x-text="getAnomalyIcon(anomaly.type)"></span>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-medium text-white" x-text="anomaly.type"></span>
+                            <span class="px-2 py-0.5 text-xs rounded" :class="getAnomalySeverityClass(anomaly.severity)" x-text="anomaly.severity"></span>
+                        </div>
+                        <p class="text-sm text-gray-400 mt-1" x-text="anomaly.description"></p>
+                    </div>
+                    <span class="text-xs text-gray-500" x-text="formatTime(anomaly.detected_at)"></span>
+                </div>
+            </template>
+            <template x-if="anomalies.length === 0">
+                <div class="p-8 text-center text-gray-500">No anomalies detected</div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function mlBaselinesManager() {
+    return {
+        baselines: [],
+        anomalies: [],
+        mlEnabled: true,
+        learningPhase: 'Active',
+        stats: { anomalies: 0 },
+
+        async init() {
+            await this.loadBaselines();
+            await this.loadAnomalies();
+        },
+
+        async loadBaselines() {
+            try {
+                const response = await fetch('/api/v1/ml/baselines', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.baselines = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load baselines:', error);
+            }
+        },
+
+        async loadAnomalies() {
+            try {
+                const response = await fetch('/api/v1/ml/anomalies', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.anomalies = data.data;
+                    this.stats.anomalies = data.data.length;
+                }
+            } catch (error) {
+                console.error('Failed to load anomalies:', error);
+            }
+        },
+
+        async refreshBaselines() {
+            await this.loadBaselines();
+        },
+
+        async resetBaseline(baseline) {
+            if (!confirm('Reset baseline for ' + baseline.device_id + '?')) return;
+            try {
+                await fetch('/api/v1/ml/baselines/' + baseline.device_id, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                await this.loadBaselines();
+            } catch (error) {
+                console.error('Failed to reset baseline:', error);
+            }
+        },
+
+        viewBaseline(baseline) {
+            alert('Baseline details for ' + baseline.device_id + ':\n\n' + JSON.stringify(baseline, null, 2));
+        },
+
+        formatTime(timestamp) {
+            return new Date(timestamp).toLocaleString();
+        },
+
+        formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        getAnomalyIcon(type) {
+            const icons = {
+                'HighTraffic': '📈',
+                'UnusualPort': '🚪',
+                'DataExfiltration': '📤',
+                'PortScan': '🔍',
+                'BruteForce': '🔓',
+                'BandwidthSpike': '⚡'
+            };
+            return icons[type] || '⚠️';
+        },
+
+        getAnomalySeverityClass(severity) {
+            const classes = {
+                'Critical': 'bg-cyber-danger/20 text-cyber-danger',
+                'High': 'bg-orange-500/20 text-orange-500',
+                'Medium': 'bg-cyber-warn/20 text-cyber-warn',
+                'Low': 'bg-blue-500/20 text-blue-500'
+            };
+            return classes[severity] || classes.Medium;
+        }
+    }
+}
+</script>
+{% endblock %}

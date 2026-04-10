@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Alert Rules - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="alertRulesManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Active Rules</div>
+            <div class="text-3xl font-bold text-cyber-success" x-text="activeCount">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Triggers Today</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="todayTriggers">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Disabled Rules</div>
+            <div class="text-3xl font-bold text-gray-500" x-text="disabledCount">0</div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Form -->
+    <div x-show="showForm" class="glass-panel rounded-xl mb-6 p-6">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-lg font-semibold text-white" x-text="editingRule ? 'Edit Rule' : 'Create New Rule'"></h2>
+            <button @click="closeForm()" class="text-gray-400 hover:text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <form @submit.prevent="saveRule()" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Rule Name</label>
+                <input type="text" x-model="formData.name" required
+                    class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                    placeholder="Enter rule name">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Rule Type</label>
+                <select x-model="formData.rule_type" class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                    <option value="Threshold">Threshold</option>
+                    <option value="Pattern">Pattern</option>
+                    <option value="Anomaly">Anomaly</option>
+                    <option value="DNSBlock">DNS Block</option>
+                    <option value="PortScan">Port Scan</option>
+                </select>
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-300 mb-2">Description</label>
+                <input type="text" x-model="formData.description"
+                    class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                    placeholder="Optional description">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-300 mb-2">Condition</label>
+                <input type="text" x-model="formData.condition" required
+                    class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono text-sm"
+                    placeholder="e.g., packets > 100, port == 22">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Severity</label>
+                <select x-model="formData.severity" class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                    <option value="Info">Info</option>
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Critical">Critical</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-2">Cooldown (minutes)</label>
+                <input type="number" x-model="formData.cooldown_minutes" min="0"
+                    class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                    placeholder="5">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-300 mb-2">Actions</label>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <label class="flex items-center gap-2 p-3 bg-gray-900/40 rounded-lg cursor-pointer hover:bg-gray-800/50 transition-colors">
+                        <input type="checkbox" x-model="formData.actions" value="Log" class="w-4 h-4 accent-cyber-primary">
+                        <span class="text-sm text-gray-300">Log</span>
+                    </label>
+                    <label class="flex items-center gap-2 p-3 bg-gray-900/40 rounded-lg cursor-pointer hover:bg-gray-800/50 transition-colors">
+                        <input type="checkbox" x-model="formData.actions" value="Notify" class="w-4 h-4 accent-cyber-primary">
+                        <span class="text-sm text-gray-300">Notify</span>
+                    </label>
+                    <label class="flex items-center gap-2 p-3 bg-gray-900/40 rounded-lg cursor-pointer hover:bg-gray-800/50 transition-colors">
+                        <input type="checkbox" x-model="formData.actions" value="Block" class="w-4 h-4 accent-cyber-danger">
+                        <span class="text-sm text-gray-300">Block</span>
+                    </label>
+                    <label class="flex items-center gap-2 p-3 bg-gray-900/40 rounded-lg cursor-pointer hover:bg-gray-800/50 transition-colors">
+                        <input type="checkbox" x-model="formData.actions" value="Webhook" class="w-4 h-4 accent-cyber-primary">
+                        <span class="text-sm text-gray-300">Webhook</span>
+                    </label>
+                </div>
+            </div>
+            <div class="md:col-span-2 flex gap-3 pt-4">
+                <button type="button" @click="closeForm()" class="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold py-2.5 rounded-lg transition-all">
+                    Cancel
+                </button>
+                <button type="submit" class="flex-1 bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold py-2.5 rounded-lg transition-all">
+                    <span x-text="editingRule ? 'Save Changes' : 'Create Rule'"></span>
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Rules List -->
+    <div class="glass-panel rounded-xl">
+        <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-white">Alert Rules</h2>
+            <button @click="openCreateForm()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-5 py-2.5 rounded-lg transition-all flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                </svg>
+                Create Rule
+            </button>
+        </div>
+        <div class="divide-y divide-gray-700/30 max-h-[400px] overflow-y-auto">
+            <template x-for="rule in rules" :key="rule.id">
+                <div class="p-5 hover:bg-white/[0.02] transition-colors">
+                    <div class="flex items-start justify-between">
+                        <div class="flex items-start gap-4">
+                            <div class="mt-1">
+                                <button @click="toggleRule(rule)" class="w-10 h-6 rounded-full transition-colors relative"
+                                    :class="rule.enabled ? 'bg-cyber-success' : 'bg-gray-700'">
+                                    <span class="absolute top-1 w-4 h-4 bg-white rounded-full transition-transform"
+                                        :class="rule.enabled ? 'left-5' : 'left-1'"></span>
+                                </button>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-sm font-semibold text-white" x-text="rule.name"></span>
+                                    <span class="px-2 py-0.5 text-xs font-medium rounded"
+                                        :class="getTypeClass(rule.rule_type)"
+                                        x-text="rule.rule_type"></span>
+                                </div>
+                                <p class="text-sm text-gray-400 mb-2" x-text="rule.description || 'No description'"></p>
+                                <div class="flex items-center gap-3 text-xs text-gray-500">
+                                    <span>Condition: <span class="text-gray-400 font-mono" x-text="rule.condition"></span></span>
+                                    <span>Actions: <span class="text-gray-400" x-text="rule.actions.join(', ')"></span></span>
+                                    <span>Triggers: <span class="text-cyber-warn" x-text="rule.trigger_count"></span></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button @click="openEditForm(rule)" class="text-cyber-primary hover:text-white transition-colors text-sm font-medium">
+                                Edit
+                            </button>
+                            <span class="text-gray-600">|</span>
+                            <button @click="deleteRule(rule)" class="text-cyber-danger hover:text-white transition-colors text-sm font-medium">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            <template x-if="rules.length === 0">
+                <div class="p-12 text-center text-gray-500">
+                    <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    <p class="text-lg font-medium">No alert rules configured</p>
+                    <p class="text-sm mt-1">Create rules to automate threat responses</p>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function alertRulesManager() {
+    return {
+        rules: [],
+        showForm: false,
+        editingRule: null,
+        formData: {
+            name: '',
+            description: '',
+            rule_type: 'Threshold',
+            condition: '',
+            severity: 'Medium',
+            actions: ['Log'],
+            cooldown_minutes: 5
+        },
+
+        init() {
+            this.loadRules();
+        },
+
+        async loadRules() {
+            try {
+                const response = await fetch('/api/v1/alerts/rules', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.rules = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load rules:', error);
+            }
+        },
+
+        openCreateForm() {
+            this.editingRule = null;
+            this.formData = {
+                name: '',
+                description: '',
+                rule_type: 'Threshold',
+                condition: '',
+                severity: 'Medium',
+                actions: ['Log'],
+                cooldown_minutes: 5
+            };
+            this.showForm = true;
+        },
+
+        openEditForm(rule) {
+            this.editingRule = rule;
+            this.formData = { ...rule };
+            this.showForm = true;
+        },
+
+        closeForm() {
+            this.showForm = false;
+            this.editingRule = null;
+        },
+
+        async saveRule() {
+            try {
+                const url = this.editingRule 
+                    ? '/api/v1/alerts/rules/' + this.editingRule.id
+                    : '/api/v1/alerts/rules';
+                const method = this.editingRule ? 'PUT' : 'POST';
+                
+                const response = await fetch(url, {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.formData)
+                });
+                const data = await response.json();
+                if (data.success) {
+                    this.closeForm();
+                    await this.loadRules();
+                } else {
+                    alert(data.error || 'Failed to save rule');
+                }
+            } catch (error) {
+                console.error('Failed to save rule:', error);
+            }
+        },
+
+        async toggleRule(rule) {
+            rule.enabled = !rule.enabled;
+            await this.saveRule();
+        },
+
+        async deleteRule(rule) {
+            if (!confirm('Are you sure you want to delete rule "' + rule.name + '"?')) return;
+            try {
+                const response = await fetch('/api/v1/alerts/rules/' + rule.id, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    await this.loadRules();
+                }
+            } catch (error) {
+                console.error('Failed to delete rule:', error);
+            }
+        },
+
+        getTypeClass(type) {
+            const classes = {
+                'Threshold': 'bg-cyber-warn/20 text-cyber-warn',
+                'Pattern': 'bg-cyber-accent/20 text-cyber-accent',
+                'Anomaly': 'bg-cyber-danger/20 text-cyber-danger',
+                'DNSBlock': 'bg-cyber-primary/20 text-cyber-primary',
+                'PortScan': 'bg-orange-500/20 text-orange-500'
+            };
+            return classes[type] || 'bg-gray-700/50 text-gray-400';
+        },
+
+        get activeCount() { return this.rules.filter(r => r.enabled).length; },
+        get disabledCount() { return this.rules.filter(r => !r.enabled).length; },
+        get todayTriggers() { return this.rules.reduce((sum, r) => sum + (r.trigger_count || 0), 0); }
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="notificationsManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Telegram</div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full" :class="config.telegram.enabled ? 'bg-cyber-success' : 'bg-gray-600'"></span>
+                <span class="text-sm font-medium" :class="config.telegram.enabled ? 'text-cyber-success' : 'text-gray-500'" x-text="config.telegram.enabled ? 'Enabled' : 'Disabled'"></span>
+            </div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Slack</div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full" :class="config.slack.enabled ? 'bg-cyber-success' : 'bg-gray-600'"></span>
+                <span class="text-sm font-medium" :class="config.slack.enabled ? 'text-cyber-success' : 'text-gray-500'" x-text="config.slack.enabled ? 'Enabled' : 'Disabled'"></span>
+            </div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Email</div>
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full" :class="config.email.enabled ? 'bg-cyber-success' : 'bg-gray-600'"></span>
+                <span class="text-sm font-medium" :class="config.email.enabled ? 'text-cyber-success' : 'text-gray-500'" x-text="config.email.enabled ? 'Enabled' : 'Disabled'"></span>
+            </div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Min. Severity</div>
+            <div class="text-2xl font-bold text-white" x-text="config.min_severity"></div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <svg class="w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold text-white">Telegram</h2>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.telegram.enabled" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Bot Token</label>
+                    <input type="password" x-model="config.telegram.bot_token" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono text-sm"
+                        placeholder="123456:ABC-DEF...">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Chat ID</label>
+                    <input type="text" x-model="config.telegram.chat_id" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono text-sm"
+                        placeholder="-1001234567890">
+                </div>
+                <button @click="testChannel('telegram')" class="w-full bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white font-medium px-4 py-2 rounded-lg transition-all border border-blue-600/30">
+                    Send Test Message
+                </button>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <svg class="w-6 h-6 text-purple-400" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold text-white">Slack</h2>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.slack.enabled" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Webhook URL</label>
+                    <input type="url" x-model="config.slack.webhook_url" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono text-sm"
+                        placeholder="https://hooks.slack.com/services/...">
+                </div>
+                <button @click="testChannel('slack')" class="w-full bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white font-medium px-4 py-2 rounded-lg transition-all border border-purple-600/30">
+                    Send Test Message
+                </button>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold text-white">Email (SMTP)</h2>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.email.enabled" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">SMTP Host</label>
+                        <input type="text" x-model="config.email.smtp_host" @change="saveConfig()"
+                            class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                            placeholder="smtp.gmail.com">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">SMTP Port</label>
+                        <input type="number" x-model="config.email.smtp_port" @change="saveConfig()"
+                            class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                            placeholder="587">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Username</label>
+                    <input type="text" x-model="config.email.username" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                        placeholder="your-email@gmail.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Password</label>
+                    <input type="password" x-model="config.email.password" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                        placeholder="App password">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Recipients (comma separated)</label>
+                    <input type="text" x-model="config.email.recipients" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                        placeholder="admin@example.com, alerts@example.com">
+                </div>
+                <button @click="testChannel('email')" class="w-full bg-gray-700/50 hover:bg-gray-600 text-gray-300 hover:text-white font-medium px-4 py-2 rounded-lg transition-all border border-gray-600">
+                    Send Test Email
+                </button>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50">
+                <h2 class="text-lg font-semibold text-white">Alert Settings</h2>
+            </div>
+            <div class="p-5 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Minimum Severity</label>
+                    <select x-model="config.min_severity" @change="saveConfig()" class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                        <option value="Info">Info</option>
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                        <option value="Critical">Critical</option>
+                    </select>
+                </div>
+                <div class="space-y-3">
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-sm text-gray-300">New Device Detection</span>
+                        <input type="checkbox" x-model="config.notify_new_device" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-sm text-gray-300">Port Scan Detection</span>
+                        <input type="checkbox" x-model="config.notify_portscan" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-sm text-gray-300">Blocked Domains</span>
+                        <input type="checkbox" x-model="config.notify_blocked_domain" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-sm text-gray-300">Blocked IPs</span>
+                        <input type="checkbox" x-model="config.notify_blocked_ip" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </label>
+                    <label class="flex items-center justify-between cursor-pointer">
+                        <span class="text-sm text-gray-300">Critical Alerts</span>
+                        <input type="checkbox" x-model="config.notify_critical" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function notificationsManager() {
+    return {
+        config: {
+            telegram: { enabled: false, bot_token: '', chat_id: '' },
+            slack: { enabled: false, webhook_url: '' },
+            email: { enabled: false, smtp_host: '', smtp_port: 587, username: '', password: '', recipients: '' },
+            min_severity: 'Medium',
+            notify_new_device: true,
+            notify_portscan: true,
+            notify_blocked_domain: true,
+            notify_blocked_ip: true,
+            notify_critical: true
+        },
+
+        async init() {
+            await this.loadConfig();
+        },
+
+        async loadConfig() {
+            try {
+                const response = await fetch('/api/v1/notifications/config', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.config = { ...this.config, ...data.data };
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        },
+
+        async saveConfig() {
+            try {
+                await fetch('/api/v1/notifications/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.config)
+                });
+            } catch (error) {
+                console.error('Failed to save config:', error);
+            }
+        },
+
+        async testChannel(channel) {
+            try {
+                const response = await fetch('/api/v1/notifications/test/' + channel, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    alert('Test message sent successfully!');
+                } else {
+                    alert('Failed to send test: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to send test: ' + error);
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

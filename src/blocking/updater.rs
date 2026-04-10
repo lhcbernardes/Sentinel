@@ -1,6 +1,7 @@
 use crate::blocking::blocklist::{BlockType, Blocklist};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 const BLACKLIST_URLS_URL: &str =
     "https://raw.githubusercontent.com/fabriziosalmi/blacklists/main/blacklists.fqdn.urls";
@@ -33,53 +34,71 @@ impl BlocklistUpdater {
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
-        let urls: Vec<&str> = content
+        let urls: Vec<String> = content
             .lines()
             .filter(|line| !line.trim().is_empty() && !line.trim().starts_with('#'))
+            .map(|s| s.trim().to_string())
             .collect();
 
-        tracing::info!("Found {} blocklist URLs to process", urls.len());
+        tracing::info!("Found {} blocklist URLs to process in parallel", urls.len());
+
+        let semaphore = Arc::new(Semaphore::new(10));
+        let client = Arc::new(client);
+        let blocklist = self.blocklist.clone();
+
+        let futures: Vec<_> = urls.into_iter().enumerate().map(|(i, url)| {
+            let sem = semaphore.clone();
+            let _client = client.clone();
+            let blocklist = blocklist.clone();
+            
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                
+                let block_type = if url.contains("tracker")
+                    || url.contains("ads")
+                    || url.contains("Ad")
+                    || url.contains("privacy")
+                {
+                    BlockType::Tracker
+                } else if url.contains("malware")
+                    || url.contains("phishing")
+                    || url.contains("scam")
+                    || url.contains("badware")
+                    || url.contains("toxic")
+                {
+                    BlockType::Malware
+                } else if url.contains("attacker") || url.contains("spam") {
+                    BlockType::Attacker
+                } else {
+                    BlockType::Tracker
+                };
+
+                match blocklist.load_from_url(&url, block_type).await {
+                    Ok(count) => {
+                        tracing::info!("[{}] Loaded {} entries from {}", i + 1, count, url);
+                        (block_type, count, true)
+                    }
+                    Err(e) => {
+                        tracing::warn!("[{}] Failed to load {}: {}", i + 1, url, e);
+                        (block_type, 0, false)
+                    }
+                }
+            })
+        }).collect();
+
+        let results = futures::future::join_all(futures).await;
 
         let mut total_trackers = 0;
         let mut total_malware = 0;
 
-        for (i, url) in urls.iter().enumerate() {
-            let url = url.trim();
-
-            let block_type = if url.contains("tracker")
-                || url.contains("ads")
-                || url.contains("Ad")
-                || url.contains("privacy")
-            {
-                BlockType::Tracker
-            } else if url.contains("malware")
-                || url.contains("phishing")
-                || url.contains("scam")
-                || url.contains("badware")
-                || url.contains("toxic")
-            {
-                BlockType::Malware
-            } else if url.contains("attacker") || url.contains("spam") {
-                BlockType::Attacker
-            } else {
-                BlockType::Tracker
-            };
-
-            match self.blocklist.load_from_url(url, block_type).await {
-                Ok(count) => {
-                    if block_type == BlockType::Tracker {
-                        total_trackers += count;
-                    } else {
-                        total_malware += count;
-                    }
-                    tracing::info!("[{}] Loaded {} entries from {}", i + 1, count, url);
-                }
-                Err(e) => {
-                    tracing::warn!("[{}] Failed to load {}: {}", i + 1, url, e);
+        for result in results {
+            if let Ok((block_type, count, _)) = result {
+                if block_type == BlockType::Tracker {
+                    total_trackers += count;
+                } else {
+                    total_malware += count;
                 }
             }
-
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         tracing::info!(
@@ -100,22 +119,7 @@ impl BlocklistUpdater {
             "https://hostfiles.frogeye.fr/firstparty-only-trackers-hosts.txt",
         ];
 
-        let mut total = 0;
-
-        for url in trackers {
-            match self.blocklist.load_from_url(url, BlockType::Tracker).await {
-                Ok(count) => {
-                    total += count;
-                    tracing::info!("Loaded {} tracker entries from {}", count, url);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {}: {}", url, e);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-
-        Ok(total)
+        self.load_urls_parallel(trackers, BlockType::Tracker).await
     }
 
     pub async fn update_malware(&self) -> Result<usize, String> {
@@ -127,22 +131,7 @@ impl BlocklistUpdater {
             "https://malware-filter.gitlab.io/malware-filter/phishing-filter-hosts.txt",
         ];
 
-        let mut total = 0;
-
-        for url in malware {
-            match self.blocklist.load_from_url(url, BlockType::Malware).await {
-                Ok(count) => {
-                    total += count;
-                    tracing::info!("Loaded {} malware entries from {}", count, url);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {}: {}", url, e);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-
-        Ok(total)
+        self.load_urls_parallel(malware, BlockType::Malware).await
     }
 
     pub async fn update_attackers(&self) -> Result<usize, String> {
@@ -151,20 +140,39 @@ impl BlocklistUpdater {
             "https://raw.githubusercontent.com/jarelllama/Scam-Blocklist/main/lists/wildcard_domains/scams.txt",
         ];
 
-        let mut total = 0;
+        self.load_urls_parallel(attackers, BlockType::Attacker).await
+    }
 
-        for url in attackers {
-            match self.blocklist.load_from_url(url, BlockType::Attacker).await {
-                Ok(count) => {
-                    total += count;
-                    tracing::info!("Loaded {} attacker entries from {}", count, url);
+    async fn load_urls_parallel(&self, urls: Vec<&str>, block_type: BlockType) -> Result<usize, String> {
+        let semaphore = Arc::new(Semaphore::new(10));
+        let blocklist = self.blocklist.clone();
+        
+        let urls: Vec<String> = urls.into_iter().map(|s| s.to_string()).collect();
+
+        let futures: Vec<_> = urls.into_iter().enumerate().map(|(_i, url)| {
+            let sem = semaphore.clone();
+            let blocklist = blocklist.clone();
+            
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                
+                match blocklist.load_from_url(&url, block_type).await {
+                    Ok(count) => {
+                        tracing::info!("Loaded {} entries from {}", count, url);
+                        count
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load {}: {}", url, e);
+                        0
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load {}: {}", url, e);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+            })
+        }).collect();
+
+        let results = futures::future::join_all(futures).await;
+        let total: usize = results.into_iter()
+            .map(|r| r.unwrap_or(0))
+            .sum();
 
         Ok(total)
     }

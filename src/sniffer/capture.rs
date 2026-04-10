@@ -7,6 +7,7 @@ use crate::anomaly::AnomalyDetector;
 use crate::db::Database;
 use crate::devices::DeviceManager;
 use crate::sniffer::packet::{PacketInfo, Protocol};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio::sync::broadcast;
 
 pub struct Sniffer {
@@ -29,18 +30,20 @@ impl Sniffer {
         use pcap::{Capture, Device};
 
         let interface = self.interface.clone();
+        let num_workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(2);
 
-        // Channel to decouple packet capture from database I/O
         let (db_tx, db_rx) = std::sync::mpsc::sync_channel::<PacketInfo>(10_000);
+        let (process_tx, process_rx): (Sender<PacketInfo>, Receiver<PacketInfo>) = bounded(10_000);
 
-        // Database writer thread: batches inserts to reduce lock contention
         let db_shutdown = shutdown.clone();
         let db = database.clone();
         std::thread::spawn(move || {
             let mut batch = Vec::with_capacity(100);
             loop {
                 if db_shutdown.load(Ordering::Relaxed) && db_rx.try_recv().is_err() {
-                    // Flush remaining
                     if !batch.is_empty() {
                         db.save_packets_batch(&batch);
                     }
@@ -50,7 +53,6 @@ impl Sniffer {
                 match db_rx.recv_timeout(Duration::from_millis(500)) {
                     Ok(packet) => {
                         batch.push(packet);
-                        // Drain any buffered packets without blocking
                         while let Ok(p) = db_rx.try_recv() {
                             batch.push(p);
                             if batch.len() >= 100 {
@@ -70,7 +72,33 @@ impl Sniffer {
             tracing::info!("Database writer thread stopped");
         });
 
-        // Packet capture thread
+        let worker_device_manager = device_manager.clone();
+        let worker_anomaly_detector = anomaly_detector.clone();
+        let worker_shutdown = shutdown.clone();
+        for i in 0..num_workers {
+            let rx = process_rx.clone();
+            let dm = worker_device_manager.clone();
+            let ad = worker_anomaly_detector.clone();
+            let sd = worker_shutdown.clone();
+            std::thread::spawn(move || {
+                loop {
+                    if sd.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(packet) => {
+                            dm.process_packet(&packet);
+                            ad.analyze(&packet);
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                tracing::debug!("Worker {} stopped", i);
+            });
+        }
+        tracing::info!("Started {} packet processing workers", num_workers);
+
         std::thread::spawn(move || {
             tracing::info!("Starting sniffer on interface: {}", interface);
 
@@ -129,7 +157,6 @@ impl Sniffer {
             tracing::info!("Capture opened successfully on {}", device_name);
 
             loop {
-                // Check for shutdown signal
                 if shutdown.load(Ordering::Relaxed) {
                     tracing::info!("Sniffer received shutdown signal");
                     break;
@@ -139,9 +166,7 @@ impl Sniffer {
                     Ok(packet) => {
                         if let Some(info) = parse_packet(packet.data) {
                             let _ = packet_tx.send(info.clone());
-                            device_manager.process_packet(&info);
-                            anomaly_detector.analyze(&info);
-                            // Send to DB writer thread (non-blocking: drop if full)
+                            let _ = process_tx.try_send(info.clone());
                             let _ = db_tx.try_send(info);
                         }
                     }

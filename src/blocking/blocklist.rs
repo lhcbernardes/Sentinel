@@ -67,10 +67,10 @@ pub struct Blocklist {
 impl Blocklist {
     pub fn new() -> Self {
         Self {
-            trackers: RwLock::new(HashSet::new()),
-            malware: RwLock::new(HashSet::new()),
-            attackers: RwLock::new(HashSet::new()),
-            custom: RwLock::new(HashSet::new()),
+            trackers: RwLock::new(HashSet::with_capacity(50_000)),
+            malware: RwLock::new(HashSet::with_capacity(50_000)),
+            attackers: RwLock::new(HashSet::with_capacity(10_000)),
+            custom: RwLock::new(HashSet::with_capacity(1_000)),
             config: RwLock::new(BlocklistConfig::default()),
         }
     }

@@ -114,8 +114,22 @@
             <div class="px-5 py-4 border-b border-gray-700/50 bg-gray-900/30">
                 <h2 class="font-semibold text-lg text-gray-100" data-i18n="network_devices">Network Devices</h2>
             </div>
-            <div id="devices-list" class="p-4 space-y-3 max-h-64 overflow-y-auto scrollbar-thin">
-                <div class="text-gray-500 text-center py-4 font-medium animate-pulse" data-i18n="loading_devices">Scanning devices...</div>
+            <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-800/40 text-gray-400 text-xs uppercase">
+                        <tr>
+                            <th class="px-4 py-2 text-left">IP</th>
+                            <th class="px-4 py-2 text-left">MAC</th>
+                            <th class="px-4 py-2 text-left">Vendor</th>
+                            <th class="px-4 py-2 text-left">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="devices-list" class="divide-y divide-gray-800/30">
+                        <tr>
+                            <td colspan="4" class="px-4 py-6 text-center text-gray-500">Loading devices...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -123,8 +137,8 @@
             <div class="px-5 py-4 border-b border-cyber-warn/20 bg-cyber-warn/5">
                 <h2 class="font-semibold text-lg text-cyber-warn" data-i18n="security_alerts">Security Alerts</h2>
             </div>
-            <div id="alerts-list" class="p-4 space-y-3 max-h-64 overflow-y-auto scrollbar-thin">
-                <div class="text-gray-500 text-center py-4 font-medium" data-i18n="no_alerts">System pristine. No alerts.</div>
+            <div id="alerts-list" class="divide-y divide-gray-800/30 max-h-80 overflow-y-auto">
+                <div class="p-4 text-center text-gray-500" data-i18n="no_alerts">System pristine. No alerts.</div>
             </div>
         </div>
     </div>
@@ -305,40 +319,72 @@
     function onAlertReceived(alert) {
         alertCount++;
         const alertsList = document.getElementById('alerts-list');
-        // Clear initial blank state if exists
         if(alertsList.children.length === 1 && alertsList.children[0].textContent.includes('pristine')) {
             alertsList.innerHTML = '';
         }
         
         const isCritical = alert.severity === 'Critical';
+        const isHigh = alert.severity === 'High';
         
         const alertEl = document.createElement('div');
-        // Cyber alert styling with entry animation
-        alertEl.className = `p-3 rounded-lg text-sm border row-enter ${
+        alertEl.className = `p-3 hover:bg-white/[0.02] transition-colors border-l-2 row-enter ${
             isCritical 
-                ? 'bg-cyber-danger/10 border-cyber-danger/30 text-red-100 shadow-[0_0_10px_rgba(239,68,68,0.1)]' 
-                : 'bg-cyber-warn/10 border-cyber-warn/30 text-amber-100 shadow-[0_0_10px_rgba(245,158,11,0.1)]'
+                ? 'border-l-cyber-danger bg-cyber-danger/5' 
+                : isHigh
+                ? 'border-l-orange-500 bg-orange-500/5'
+                : 'border-l-cyber-warn bg-cyber-warn/5'
         }`;
         
         alertEl.innerHTML = `
             <div class="flex justify-between items-start mb-1">
-                <span class="font-bold tracking-wide flex items-center gap-1.5 ${isCritical ? 'text-cyber-danger' : 'text-cyber-warn'}">
-                    <span class="w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-cyber-danger' : 'bg-cyber-warn'}"></span>
-                    ${alert.alert_type}
-                </span>
+                <div class="flex items-center gap-2">
+                    <span class="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${
+                        isCritical ? 'bg-cyber-danger/20 text-cyber-danger' : 
+                        isHigh ? 'bg-orange-500/20 text-orange-500' : 
+                        'bg-cyber-warn/20 text-cyber-warn'
+                    }">${alert.severity}</span>
+                    <span class="text-sm font-medium text-gray-200">${alert.alert_type || alert.type || 'Alert'}</span>
+                </div>
                 <span class="text-[10px] text-gray-500 font-mono">${new Date().toLocaleTimeString()}</span>
             </div>
-            <div class="text-gray-300 text-xs opacity-90 leading-relaxed">${alert.message || ''}</div>
+            <div class="text-xs text-gray-400 ml-14">${alert.description || alert.message || ''} ${alert.source_ip ? '<span class="font-mono text-cyber-primary ml-2">' + alert.source_ip + '</span>' : ''}</div>
         `;
         
         alertsList.insertBefore(alertEl, alertsList.firstChild);
-        if (alertsList.children.length > 20) alertsList.removeChild(alertsList.lastChild);
+        if (alertsList.children.length > 15) alertsList.removeChild(alertsList.lastChild);
         
         const counter = document.getElementById('alert-count');
         counter.textContent = alertCount;
         counter.classList.remove('text-cyber-warn');
-        if (isCritical) {
-            counter.classList.add('text-cyber-danger');
+        if (isCritical) counter.classList.add('text-cyber-danger');
+    }
+
+    // Load devices from API
+    async function loadDevices() {
+        try {
+            const response = await fetch('/api/v1/devices');
+            const data = await response.json();
+            if (data.success && data.data) {
+                const tbody = document.getElementById('devices-list');
+                if (data.data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-gray-500">No devices found</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.data.slice(0, 10).map(d => `
+                    <tr class="hover:bg-white/[0.02] transition-colors">
+                        <td class="px-4 py-2 font-mono text-xs text-gray-300">${d.ip || '-'}</td>
+                        <td class="px-4 py-2 font-mono text-xs text-gray-400">${d.mac.substring(0, 8)}...</td>
+                        <td class="px-4 py-2 text-xs text-gray-500">${d.vendor || 'Unknown'}</td>
+                        <td class="px-4 py-2">
+                            <span class="px-2 py-0.5 text-[10px] font-medium rounded-full ${d.is_online ? 'bg-cyber-success/20 text-cyber-success' : 'bg-gray-700/50 text-gray-400'}">
+                                ${d.is_online ? 'Online' : 'Offline'}
+                            </span>
+                        </td>
+                    </tr>
+                `).join('');
+            }
+        } catch (e) {
+            console.error('Failed to load devices:', e);
         }
     }
 
@@ -396,6 +442,7 @@
     // Initialize charts on specific tick
     setTimeout(() => {
         initCharts();
+        loadDevices();
     }, 100);
 </script>
 {% endblock %}

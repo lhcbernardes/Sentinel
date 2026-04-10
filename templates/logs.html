@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="logsManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Total Logs</div>
+            <div class="text-3xl font-bold text-white" x-text="stats.total">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Errors</div>
+            <div class="text-3xl font-bold text-cyber-danger" x-text="stats.errors">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Warnings</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="stats.warnings">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Info</div>
+            <div class="text-3xl font-bold text-cyber-primary" x-text="stats.info">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-2">Auto Refresh</div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" x-model="autoRefresh" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+            </label>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl mb-6">
+        <div class="p-5 border-b border-gray-700/50">
+            <div class="flex flex-col sm:flex-row gap-4 justify-between">
+                <div class="flex flex-wrap gap-2">
+                    <button @click="filterLevel('all')" 
+                        class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+                        :class="levelFilter === 'all' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400'">
+                        All
+                    </button>
+                    <button @click="filterLevel('error')" 
+                        class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+                        :class="levelFilter === 'error' ? 'bg-cyber-danger text-white' : 'bg-gray-800 text-gray-400'">
+                        Error
+                    </button>
+                    <button @click="filterLevel('warn')" 
+                        class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+                        :class="levelFilter === 'warn' ? 'bg-cyber-warn text-white' : 'bg-gray-800 text-gray-400'">
+                        Warning
+                    </button>
+                    <button @click="filterLevel('info')" 
+                        class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+                        :class="levelFilter === 'info' ? 'bg-cyber-primary text-white' : 'bg-gray-800 text-gray-400'">
+                        Info
+                    </button>
+                    <button @click="filterLevel('debug')" 
+                        class="px-4 py-2 text-sm font-medium rounded-lg transition-all"
+                        :class="levelFilter === 'debug' ? 'bg-gray-500 text-white' : 'bg-gray-800 text-gray-400'">
+                        Debug
+                    </button>
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" x-model="searchQuery" @input="filterLogs()" 
+                        class="w-64 bg-gray-900/60 text-white px-4 py-2 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors text-sm"
+                        placeholder="Search logs...">
+                    <button @click="exportLogs()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg transition-all text-sm font-medium">
+                        Export
+                    </button>
+                    <button @click="clearLogs()" class="bg-cyber-danger/20 hover:bg-cyber-danger text-cyber-danger px-4 py-2 rounded-lg transition-all text-sm font-medium">
+                        Clear
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="max-h-[500px] overflow-y-auto font-mono text-sm">
+            <template x-for="(log, index) in filteredLogs" :key="index">
+                <div class="px-5 py-3 border-b border-gray-800/50 hover:bg-white/[0.02] transition-colors"
+                    :class="getLogLevelClass(log.level)">
+                    <div class="flex items-start gap-4">
+                        <span class="text-xs text-gray-500 whitespace-nowrap" x-text="formatTime(log.timestamp)"></span>
+                        <span class="px-2 py-0.5 text-xs font-bold uppercase rounded w-16 text-center"
+                            :class="getLogLevelBadgeClass(log.level)"
+                            x-text="log.level"></span>
+                        <span class="text-gray-400 flex-1" x-text="log.message"></span>
+                    </div>
+                    <div x-show="log.source" class="mt-1 text-xs text-gray-600 ml-20">
+                        <span>Source:</span>
+                        <span x-text="log.source"></span>
+                    </div>
+                </div>
+            </template>
+            <template x-if="filteredLogs.length === 0">
+                <div class="p-12 text-center text-gray-500">
+                    No logs match your filters
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function logsManager() {
+    return {
+        logs: [],
+        filteredLogs: [],
+        levelFilter: 'all',
+        searchQuery: '',
+        autoRefresh: true,
+        stats: { total: 0, errors: 0, warnings: 0, info: 0 },
+
+        async init() {
+            await this.loadLogs();
+            if (this.autoRefresh) {
+                setInterval(() => {
+                    if (this.autoRefresh) this.loadLogs();
+                }, 5000);
+            }
+        },
+
+        async loadLogs() {
+            try {
+                const response = await fetch('/api/v1/logs');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.logs = data.data;
+                    this.filterLogs();
+                    this.updateStats();
+                }
+            } catch (error) {
+                console.error('Failed to load logs:', error);
+            }
+        },
+
+        filterLevel(level) {
+            this.levelFilter = level;
+            this.filterLogs();
+        },
+
+        filterLogs() {
+            let filtered = this.logs;
+            if (this.levelFilter !== 'all') {
+                filtered = filtered.filter(l => l.level === this.levelFilter);
+            }
+            if (this.searchQuery) {
+                const q = this.searchQuery.toLowerCase();
+                filtered = filtered.filter(l => l.message.toLowerCase().includes(q));
+            }
+            this.filteredLogs = filtered;
+        },
+
+        updateStats() {
+            this.stats = {
+                total: this.logs.length,
+                errors: this.logs.filter(l => l.level === 'error').length,
+                warnings: this.logs.filter(l => l.level === 'warn').length,
+                info: this.logs.filter(l => l.level === 'info').length
+            };
+        },
+
+        clearLogs() {
+            this.logs = [];
+            this.filteredLogs = [];
+            this.updateStats();
+        },
+
+        exportLogs() {
+            const data = JSON.stringify(this.filteredLogs, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sentinel-logs-' + new Date().toISOString().split('T')[0] + '.json';
+            a.click();
+        },
+
+        formatTime(timestamp) {
+            return new Date(timestamp).toLocaleTimeString();
+        },
+
+        getLogLevelClass(level) {
+            const classes = {
+                'error': 'border-l-2 border-l-cyber-danger',
+                'warn': 'border-l-2 border-l-cyber-warn',
+                'info': 'border-l-2 border-l-cyber-primary',
+                'debug': 'border-l-2 border-l-gray-600'
+            };
+            return classes[level] || '';
+        },
+
+        getLogLevelBadgeClass(level) {
+            const classes = {
+                'error': 'bg-cyber-danger/20 text-cyber-danger',
+                'warn': 'bg-cyber-warn/20 text-cyber-warn',
+                'info': 'bg-cyber-primary/20 text-cyber-primary',
+                'debug': 'bg-gray-700/50 text-gray-400'
+            };
+            return classes[level] || classes.debug;
+        }
+    }
+}
+</script>
+{% endblock %}

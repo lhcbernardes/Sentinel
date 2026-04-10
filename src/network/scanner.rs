@@ -1,5 +1,7 @@
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::sync::Mutex;
 
 #[allow(dead_code)]
 const VALID_IP_REGEX: &str = r"^(\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$";
@@ -7,7 +9,6 @@ const VALID_IP_REGEX: &str = r"^(\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$";
 fn validate_subnet(subnet: &str) -> Result<String, String> {
     let subnet = subnet.trim();
 
-    // Check for dangerous characters that could be used for command injection
     let dangerous_chars = [
         ';', '&', '|', '$', '`', '(', ')', '<', '>', '\n', '\r', '\0',
     ];
@@ -17,7 +18,6 @@ fn validate_subnet(subnet: &str) -> Result<String, String> {
         }
     }
 
-    // Basic IP/CIDR validation
     if !subnet.is_empty()
         && !subnet
             .chars()
@@ -26,7 +26,6 @@ fn validate_subnet(subnet: &str) -> Result<String, String> {
         return Err("Invalid subnet: contains non-numeric characters".to_string());
     }
 
-    // Validate IP ranges
     if subnet.contains('/') {
         let parts: Vec<&str> = subnet.split('/').collect();
         if parts.len() != 2 {
@@ -67,7 +66,6 @@ impl NetworkScanner {
     }
 
     pub fn arp_scan(subnet: &str) -> Vec<ScanResult> {
-        // Validate input to prevent command injection
         if let Err(e) = validate_subnet(subnet) {
             tracing::warn!("Invalid subnet input: {}", e);
             return Vec::new();
@@ -75,7 +73,6 @@ impl NetworkScanner {
 
         let mut results = Vec::new();
 
-        // Try ARP scan (Linux)
         #[cfg(target_os = "linux")]
         {
             let output = Command::new("arp-scan")
@@ -104,7 +101,6 @@ impl NetworkScanner {
                 }
             }
 
-            // Fallback: parse /proc/net/arp
             if results.is_empty() {
                 if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
                     for line in content.lines().skip(1) {
@@ -128,7 +124,6 @@ impl NetworkScanner {
             }
         }
 
-        // macOS: use arp -a
         #[cfg(target_os = "macos")]
         {
             let output = Command::new("arp").args(["-a"]).output();
@@ -197,17 +192,16 @@ impl NetworkScanner {
     }
 
     pub fn quick_scan(subnet: &str) -> Vec<ScanResult> {
-        // Quick scan using ping sweep
-        let mut results = Vec::new();
-
-        // For /24 subnets, scan common IPs
         let base_ip: String = subnet.chars().take_while(|c| *c != '.').collect();
 
-        for i in 1..254 {
+        let results = Mutex::new(Vec::new());
+
+        (1..255_u8).into_par_iter().for_each(|i| {
             let ip = format!("{}.{}", base_ip, i);
             if let Some(latency) = Self::ping_host(&ip) {
-                results.push(ScanResult {
-                    ip: ip.clone(),
+                let mut res = results.lock().unwrap();
+                res.push(ScanResult {
+                    ip,
                     mac: None,
                     hostname: None,
                     manufacturer: None,
@@ -215,14 +209,48 @@ impl NetworkScanner {
                     response_time_ms: Some(latency),
                 });
             }
+        });
 
-            // Limit concurrent checks
-            if i % 10 == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut results = results.into_inner().unwrap();
+
+        let arp_results = Self::arp_scan(subnet);
+        for arp in arp_results {
+            if !results.iter().any(|r: &ScanResult| r.ip == arp.ip) {
+                results.push(arp);
             }
         }
 
-        // Add ARP results
+        results
+    }
+
+    pub fn quick_scan_with_threads(subnet: &str, num_threads: usize) -> Vec<ScanResult> {
+        let base_ip: String = subnet.chars().take_while(|c| *c != '.').collect();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
+
+        let results = Mutex::new(Vec::new());
+
+        pool.install(|| {
+            (1..255_u8).into_par_iter().for_each(|i| {
+                let ip = format!("{}.{}", base_ip, i);
+                if let Some(latency) = Self::ping_host(&ip) {
+                    let mut res = results.lock().unwrap();
+                    res.push(ScanResult {
+                        ip,
+                        mac: None,
+                        hostname: None,
+                        manufacturer: None,
+                        is_alive: true,
+                        response_time_ms: Some(latency),
+                    });
+                }
+            });
+        });
+
+        let mut results = results.into_inner().unwrap();
+
         let arp_results = Self::arp_scan(subnet);
         for arp in arp_results {
             if !results.iter().any(|r: &ScanResult| r.ip == arp.ip) {

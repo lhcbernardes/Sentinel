@@ -52,8 +52,13 @@ pub struct NetFlowProcessor {
 impl NetFlowProcessor {
     pub fn new() -> Self {
         Self {
-            flows: std::sync::RwLock::new(HashMap::new()),
-            stats: std::sync::RwLock::new(FlowStats::default()),
+            flows: std::sync::RwLock::new(HashMap::with_capacity(10000)),
+            stats: std::sync::RwLock::new(FlowStats {
+                protocols: HashMap::with_capacity(20),
+                top_talkers: HashMap::with_capacity(100),
+                top_destinations: HashMap::with_capacity(100),
+                ..Default::default()
+            }),
         }
     }
 

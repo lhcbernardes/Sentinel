@@ -15,7 +15,7 @@ pub struct DeviceManager {
 impl DeviceManager {
     pub fn new(alert_tx: broadcast::Sender<crate::anomaly::Alert>) -> Self {
         Self {
-            devices: RwLock::new(HashMap::new()),
+            devices: RwLock::new(HashMap::with_capacity(256)),
             alert_tx,
         }
     }

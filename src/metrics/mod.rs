@@ -21,8 +21,8 @@ impl MetricsExporter {
             blocked_queries: RwLock::new(0),
             dns_queries: RwLock::new(0),
             devices_seen: RwLock::new(0),
-            requests_by_endpoint: RwLock::new(std::collections::HashMap::new()),
-            response_times: RwLock::new(Vec::new()),
+            requests_by_endpoint: RwLock::new(std::collections::HashMap::with_capacity(100)),
+            response_times: RwLock::new(Vec::with_capacity(1000)),
         }
     }
 

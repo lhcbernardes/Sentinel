@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}Parental Controls - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="parentalManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Adult Blocked</div>
+            <div class="text-3xl font-bold text-cyber-danger" x-text="stats.adult_blocked">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Safe Search</div>
+            <div class="text-3xl font-bold text-cyber-success" x-text="stats.safe_search">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Categories</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="stats.categories_enabled">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-2">Status</div>
+            <span class="px-3 py-1 text-xs font-bold rounded-full"
+                :class="config.enabled ? 'bg-cyber-success/20 text-cyber-success' : 'bg-gray-700 text-gray-400'"
+                x-text="config.enabled ? 'Enabled' : 'Disabled'"></span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-white">Parental Controls</h2>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" x-model="config.enabled" @change="saveConfig()" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                </label>
+            </div>
+            <div class="p-5 space-y-4">
+                <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                    <div>
+                        <span class="text-gray-300 font-medium">Block Adult Content</span>
+                        <p class="text-xs text-gray-500 mt-1">Block domains known for adult content</p>
+                    </div>
+                    <input type="checkbox" x-model="config.block_adult" @change="saveConfig()" class="w-5 h-5 accent-cyber-danger">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                    <div>
+                        <span class="text-gray-300 font-medium">Enforce Safe Search</span>
+                        <p class="text-xs text-gray-500 mt-1">Force safe search on search engines</p>
+                    </div>
+                    <input type="checkbox" x-model="config.safe_search" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                    <div>
+                        <span class="text-gray-300 font-medium">Block Gambling</span>
+                        <p class="text-xs text-gray-500 mt-1">Block gambling-related domains</p>
+                    </div>
+                    <input type="checkbox" x-model="config.block_gambling" @change="saveConfig()" class="w-5 h-5 accent-cyber-warn">
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                    <div>
+                        <span class="text-gray-300 font-medium">Block Social Media</span>
+                        <p class="text-xs text-gray-500 mt-1">Block social media platforms</p>
+                    </div>
+                    <input type="checkbox" x-model="config.block_social" @change="saveConfig()" class="w-5 h-5 accent-cyber-accent">
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50 flex justify-between items-center">
+                <h2 class="text-lg font-semibold text-white">Content Categories</h2>
+                <button @click="updateBlocklists()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-4 py-2 rounded-lg transition-all text-sm">
+                    Update Lists
+                </button>
+            </div>
+            <div class="p-5 space-y-3">
+                <template x-for="category in categories" :key="category.id">
+                    <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl" x-text="category.icon"></span>
+                            <div>
+                                <span class="text-gray-300 font-medium" x-text="category.name"></span>
+                                <p class="text-xs text-gray-500" x-text="category.domains + ' domains'"></p>
+                            </div>
+                        </div>
+                        <input type="checkbox" x-model="category.enabled" @change="saveConfig()" class="w-5 h-5 accent-cyber-primary">
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl lg:col-span-2">
+            <div class="p-5 border-b border-gray-700/50">
+                <h2 class="text-lg font-semibold text-white">Blocked Domains</h2>
+            </div>
+            <div class="p-5 max-h-[300px] overflow-y-auto">
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="domain in blockedDomains" :key="domain">
+                        <span class="px-3 py-1 bg-cyber-danger/10 text-cyber-danger text-sm rounded-lg border border-cyber-danger/20 font-mono">
+                            <span x-text="domain"></span>
+                            <button @click="unblockDomain(domain)" class="ml-2 hover:text-white">×</button>
+                        </span>
+                    </template>
+                    <template x-if="blockedDomains.length === 0">
+                        <span class="text-gray-500 text-sm">No domains blocked</span>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function parentalManager() {
+    return {
+        config: {
+            enabled: false,
+            block_adult: true,
+            safe_search: true,
+            block_gambling: false,
+            block_social: false
+        },
+        categories: [
+            { id: 'adult', name: 'Adult Content', icon: '🔞', domains: 50000, enabled: true },
+            { id: 'gambling', name: 'Gambling', icon: '🎰', domains: 5000, enabled: false },
+            { id: 'social', name: 'Social Media', icon: '📱', domains: 200, enabled: false },
+            { id: 'gaming', name: 'Gaming', icon: '🎮', domains: 1000, enabled: false },
+            { id: 'streaming', name: 'Streaming', icon: '📺', domains: 500, enabled: false }
+        ],
+        blockedDomains: [],
+        stats: { adult_blocked: 0, safe_search: 0, categories_enabled: 0 },
+
+        async init() {
+            await this.loadConfig();
+            await this.loadBlockedDomains();
+        },
+
+        async loadConfig() {
+            try {
+                const response = await fetch('/api/v1/parental/config', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.config = { ...this.config, ...data.data };
+                    this.updateStats();
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        },
+
+        async loadBlockedDomains() {
+            try {
+                const response = await fetch('/api/v1/dns/queries?blocked=true');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.blockedDomains = [...new Set(data.data.map(q => q.domain))].slice(0, 50);
+                }
+            } catch (error) {
+                console.error('Failed to load blocked domains:', error);
+            }
+        },
+
+        async saveConfig() {
+            try {
+                await fetch('/api/v1/parental/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.config)
+                });
+                this.updateStats();
+            } catch (error) {
+                console.error('Failed to save config:', error);
+            }
+        },
+
+        async updateBlocklists() {
+            try {
+                await fetch('/api/v1/blocklist/update', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                alert('Blocklists updated!');
+            } catch (error) {
+                console.error('Failed to update blocklists:', error);
+            }
+        },
+
+        async unblockDomain(domain) {
+            try {
+                await fetch('/api/v1/blocklist/domains', {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify({ domain })
+                });
+                this.blockedDomains = this.blockedDomains.filter(d => d !== domain);
+            } catch (error) {
+                console.error('Failed to unblock domain:', error);
+            }
+        },
+
+        updateStats() {
+            this.stats.categories_enabled = this.categories.filter(c => c.enabled).length;
+        }
+    }
+}
+</script>
+{% endblock %}

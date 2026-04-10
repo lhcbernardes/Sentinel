@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="settingsManager()" x-init="init()">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 space-y-6">
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">General Settings</h2>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Interface</label>
+                        <select x-model="settings.interface" class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                            <option value="auto">Auto-detect</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Prometheus Port</label>
+                        <input type="number" x-model="settings.prometheus_port" min="1024" max="65535"
+                            class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                            placeholder="9090">
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                        <div>
+                            <span class="text-gray-300 font-medium">Prometheus Metrics</span>
+                            <p class="text-xs text-gray-500 mt-1">Export metrics for Prometheus scraping</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="settings.prometheus_enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">DNS Settings</h2>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">DNS Server Port</label>
+                        <input type="number" x-model="settings.dns_port" min="1" max="65535"
+                            class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors"
+                            placeholder="53">
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                        <div>
+                            <span class="text-gray-300 font-medium">DNS over HTTPS (DoH)</span>
+                            <p class="text-xs text-gray-500 mt-1">Use encrypted DNS resolution</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="settings.doh_enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                        </label>
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                        <div>
+                            <span class="text-gray-300 font-medium">DNS over TLS (DoT)</span>
+                            <p class="text-xs text-gray-500 mt-1">Use TLS encrypted DNS</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="settings.dot_enabled" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                        </label>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Upstream DNS Servers</label>
+                        <textarea x-model="settings.upstream_dns" rows="3"
+                            class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors font-mono text-sm"
+                            placeholder="1.1.1.1, 8.8.8.8"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">Logging</h2>
+                </div>
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Log Level</label>
+                        <select x-model="settings.log_level" class="w-full bg-gray-900/60 text-white px-4 py-2.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                            <option value="debug">Debug</option>
+                            <option value="info">Info</option>
+                            <option value="warn">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center justify-between p-3 bg-gray-900/40 rounded-lg">
+                        <div>
+                            <span class="text-gray-300 font-medium">Packet Logging</span>
+                            <p class="text-xs text-gray-500 mt-1">Store captured packets in database</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" x-model="settings.packet_logging" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">System Info</h2>
+                </div>
+                <div class="p-5 space-y-3">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Version</span>
+                        <span class="text-white font-mono text-sm" x-text="systemInfo.version"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Uptime</span>
+                        <span class="text-white font-mono text-sm" x-text="systemInfo.uptime"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Interface</span>
+                        <span class="text-white font-mono text-sm" x-text="systemInfo.interface"></span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Database Size</span>
+                        <span class="text-white font-mono text-sm" x-text="systemInfo.db_size"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">Actions</h2>
+                </div>
+                <div class="p-5 space-y-3">
+                    <button @click="restartService()" class="w-full bg-cyber-warn/20 hover:bg-cyber-warn text-cyber-warn hover:text-white font-semibold px-4 py-3 rounded-lg transition-all border border-cyber-warn/30">
+                        Restart Service
+                    </button>
+                    <button @click="clearDatabase()" class="w-full bg-cyber-danger/20 hover:bg-cyber-danger text-cyber-danger hover:text-white font-semibold px-4 py-3 rounded-lg transition-all border border-cyber-danger/30">
+                        Clear Database
+                    </button>
+                    <button @click="saveSettings()" class="w-full bg-cyber-primary/80 hover:bg-cyber-primary text-white font-semibold px-4 py-3 rounded-lg transition-all">
+                        Save Settings
+                    </button>
+                </div>
+            </div>
+
+            <div class="glass-panel rounded-xl">
+                <div class="p-5 border-b border-gray-700/50">
+                    <h2 class="text-lg font-semibold text-white">Quick Links</h2>
+                </div>
+                <div class="p-3 space-y-1">
+                    <a href="/metrics" target="_blank" class="flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800/50 rounded-lg transition-colors text-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                        </svg>
+                        Prometheus Metrics
+                    </a>
+                    <a href="/api/v1/status" target="_blank" class="flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800/50 rounded-lg transition-colors text-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                        </svg>
+                        API Status
+                    </a>
+                    <a href="/api/v1/health" target="_blank" class="flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800/50 rounded-lg transition-colors text-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+                        </svg>
+                        Health Check
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function settingsManager() {
+    return {
+        settings: {
+            interface: 'auto',
+            prometheus_port: 9090,
+            prometheus_enabled: true,
+            dns_port: 53,
+            doh_enabled: false,
+            dot_enabled: false,
+            upstream_dns: '1.1.1.1, 8.8.8.8',
+            log_level: 'info',
+            packet_logging: true
+        },
+        systemInfo: {
+            version: '1.0.0',
+            uptime: 'Calculating...',
+            interface: 'eth0',
+            db_size: '0 KB'
+        },
+
+        async init() {
+            await this.loadSettings();
+            await this.loadSystemInfo();
+        },
+
+        async loadSettings() {
+            try {
+                const response = await fetch('/api/v1/config');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.settings = { ...this.settings, ...data.data };
+                }
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        },
+
+        async loadSystemInfo() {
+            try {
+                const response = await fetch('/api/v1/status');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.systemInfo = {
+                        version: data.data.version || '1.0.0',
+                        uptime: this.formatUptime(data.data.uptime_seconds),
+                        interface: data.data.interface || 'Unknown',
+                        db_size: 'Calculating...'
+                    };
+                }
+            } catch (error) {
+                console.error('Failed to load system info:', error);
+            }
+        },
+
+        async saveSettings() {
+            try {
+                await fetch('/api/v1/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.settings)
+                });
+                alert('Settings saved!');
+            } catch (error) {
+                console.error('Failed to save settings:', error);
+            }
+        },
+
+        restartService() {
+            if (!confirm('Restart the Sentinel service?')) return;
+            alert('Restart not implemented via API');
+        },
+
+        clearDatabase() {
+            if (!confirm('Clear all database data? This cannot be undone!')) return;
+            alert('Clear database not implemented via API');
+        },
+
+        formatUptime(seconds) {
+            if (!seconds) return 'Unknown';
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm';
+        }
+    }
+}
+</script>
+{% endblock %}

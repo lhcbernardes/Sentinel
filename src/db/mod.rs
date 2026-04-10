@@ -108,6 +108,36 @@ impl Database {
         )
         .map_err(|e| format!("Failed to create devices last_seen index: {}", e))?;
 
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packets_src_ip ON packets(src_ip)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create packets src_ip index: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packets_dst_ip ON packets(dst_ip)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create packets dst_ip index: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_packets_protocol ON packets(protocol)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create packets protocol index: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alerts_source_ip ON alerts(source_ip)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create alerts source_ip index: {}", e))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_devices_ip ON devices(ip_address)",
+            [],
+        )
+        .map_err(|e| format!("Failed to create devices ip_address index: {}", e))?;
+
         info!("Database schema initialized");
         Ok(())
     }
@@ -180,37 +210,44 @@ impl Database {
         Ok(())
     }
 
-    /// Batch insert packets within a single transaction for much better performance.
+    /// Batch insert packets using multi-row INSERT for better performance.
     pub fn save_packets_batch(&self, packets: &[crate::sniffer::PacketInfo]) {
         if packets.is_empty() {
             return;
         }
-        let conn = self.conn.lock();
-        if let Err(e) = conn.execute_batch("BEGIN") {
-            tracing::warn!("Failed to begin batch transaction: {}", e);
-            return;
-        }
+
+        let mut values = Vec::with_capacity(packets.len());
         for packet in packets {
-            if let Err(e) = conn.execute(
-                "INSERT INTO packets (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, size, src_mac, dst_mac)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    packet.timestamp,
-                    packet.src_ip.to_string(),
-                    packet.dst_ip.to_string(),
-                    packet.src_port,
-                    packet.dst_port,
-                    packet.protocol.to_string(),
-                    packet.size,
-                    packet.src_mac,
-                    packet.dst_mac,
-                ],
-            ) {
-                tracing::warn!("Failed to save packet in batch: {}", e);
-            }
+            let src_ip = packet.src_ip.to_string();
+            let dst_ip = packet.dst_ip.to_string();
+            let protocol = packet.protocol.to_string();
+            let src_port = packet.src_port.unwrap_or(0);
+            let dst_port = packet.dst_port.unwrap_or(0);
+            let src_mac = packet.src_mac.as_deref().unwrap_or("");
+            let dst_mac = packet.dst_mac.as_deref().unwrap_or("");
+
+            values.push(format!(
+                "({}, '{}', '{}', {}, {}, '{}', {}, '{}', '{}')",
+                packet.timestamp,
+                src_ip,
+                dst_ip,
+                src_port,
+                dst_port,
+                protocol,
+                packet.size,
+                src_mac,
+                dst_mac
+            ));
         }
-        if let Err(e) = conn.execute_batch("COMMIT") {
-            tracing::warn!("Failed to commit batch transaction: {}", e);
+
+        let query = format!(
+            "INSERT INTO packets (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, size, src_mac, dst_mac) VALUES {}",
+            values.join(",")
+        );
+
+        let conn = self.conn.lock();
+        if let Err(e) = conn.execute_batch(&query) {
+            tracing::warn!("Failed to batch insert packets: {}", e);
         }
     }
 

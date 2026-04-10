@@ -25,8 +25,8 @@ impl DnsSinkhole {
             query_count: RwLock::new(0),
             allow_fallback,
             platform_supported: RwLock::new(platform_supported),
-            cache: RwLock::new(HashMap::new()),
-            query_log: RwLock::new(VecDeque::with_capacity(100)),
+            cache: RwLock::new(HashMap::with_capacity(1000)),
+            query_log: RwLock::new(VecDeque::with_capacity(5000)),
         }
     }
 

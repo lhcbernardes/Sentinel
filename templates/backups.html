@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+
+{% block title %}Backups - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="backupsManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Available Backups</div>
+            <div class="text-3xl font-bold text-white" x-text="backups.length">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Latest Backup</div>
+            <div class="text-lg font-medium text-cyber-primary" x-text="latestBackup || 'None'"></div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Auto-Backup</div>
+            <span class="px-3 py-1 text-xs font-bold rounded-full"
+                :class="config.auto_backup ? 'bg-cyber-success/20 text-cyber-success' : 'bg-gray-700 text-gray-400'"
+                x-text="config.auto_backup ? 'Enabled' : 'Disabled'"></span>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Retention</div>
+            <div class="text-2xl font-bold text-white" x-text="config.max_backups + ' backups'"></div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50">
+                <h2 class="text-lg font-semibold text-white">Create Backup</h2>
+            </div>
+            <div class="p-5 space-y-4">
+                <p class="text-sm text-gray-400">Create a manual backup of your configuration and settings.</p>
+                <button @click="createBackup()" :disabled="creating" 
+                    class="w-full bg-cyber-primary/80 hover:bg-cyber-primary disabled:opacity-50 text-white font-semibold px-5 py-3 rounded-lg transition-all flex items-center justify-center gap-2">
+                    <svg x-show="!creating" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                    </svg>
+                    <span x-text="creating ? 'Creating...' : 'Create Backup'"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50">
+                <h2 class="text-lg font-semibold text-white">Restore Backup</h2>
+            </div>
+            <div class="p-5 space-y-4">
+                <p class="text-sm text-gray-400">Restore configuration from a backup file.</p>
+                <input type="file" @change="handleRestoreFile($event)" accept=".json" class="hidden" id="restoreFile">
+                <button @click="document.getElementById('restoreFile').click()" 
+                    class="w-full bg-cyber-warn/20 hover:bg-cyber-warn text-cyber-warn hover:text-white font-semibold px-5 py-3 rounded-lg transition-all border border-cyber-warn/30">
+                    Select Backup File
+                </button>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-xl">
+            <div class="p-5 border-b border-gray-700/50">
+                <h2 class="text-lg font-semibold text-white">Backup Settings</h2>
+            </div>
+            <div class="p-5 space-y-4">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-gray-300">Auto-Backup</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" x-model="config.auto_backup" @change="saveConfig()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyber-primary"></div>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-300 mb-2">Max Backups to Keep</label>
+                    <input type="number" x-model="config.max_backups" min="1" max="50" @change="saveConfig()"
+                        class="w-full bg-gray-900/60 text-white px-4 py-2 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-300 mb-2">Export Format</label>
+                    <select x-model="exportFormat" class="w-full bg-gray-900/60 text-white px-4 py-2 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors">
+                        <option value="full">Full Backup</option>
+                        <option value="blocklists">Blocklists Only</option>
+                        <option value="policies">Policies Only</option>
+                        <option value="config">Configuration Only</option>
+                    </select>
+                </div>
+                <button @click="exportConfig()" 
+                    class="w-full bg-gray-700/50 hover:bg-gray-600 text-gray-300 font-semibold px-5 py-2 rounded-lg transition-all">
+                    Export Configuration
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl">
+        <div class="p-5 border-b border-gray-700/50">
+            <h2 class="text-lg font-semibold text-white">Backup History</h2>
+        </div>
+        <div class="divide-y divide-gray-700/30 max-h-[400px] overflow-y-auto">
+            <template x-for="backup in backups" :key="backup.id">
+                <div class="p-5 flex items-center justify-between hover:bg-white/[0.02]">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-lg bg-cyber-primary/10 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-cyber-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="font-medium text-white" x-text="backup.name"></div>
+                            <div class="text-sm text-gray-500">
+                                <span x-text="formatSize(backup.size)"></span>
+                                <span class="mx-2">•</span>
+                                <span x-text="formatTime(backup.created_at)"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="downloadBackup(backup)" class="text-cyber-primary hover:text-white transition-colors text-sm font-medium">
+                            Download
+                        </button>
+                        <span class="text-gray-700">|</span>
+                        <button @click="restoreBackup(backup)" class="text-cyber-warn hover:text-white transition-colors text-sm font-medium">
+                            Restore
+                        </button>
+                        <span class="text-gray-700">|</span>
+                        <button @click="deleteBackup(backup)" class="text-cyber-danger hover:text-white transition-colors text-sm font-medium">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+            </template>
+            <template x-if="backups.length === 0">
+                <div class="p-12 text-center text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+                    </svg>
+                    <p>No backups available</p>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function backupsManager() {
+    return {
+        backups: [],
+        creating: false,
+        exportFormat: 'full',
+        config: { auto_backup: true, max_backups: 10 },
+
+        async init() {
+            await this.loadBackups();
+            await this.loadConfig();
+        },
+
+        async loadBackups() {
+            try {
+                const response = await fetch('/api/v1/backups', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.backups = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load backups:', error);
+            }
+        },
+
+        async loadConfig() {
+            try {
+                const response = await fetch('/api/v1/backups/config', {
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.config = data.data;
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        },
+
+        async saveConfig() {
+            try {
+                await fetch('/api/v1/backups/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                    },
+                    body: JSON.stringify(this.config)
+                });
+            } catch (error) {
+                console.error('Failed to save config:', error);
+            }
+        },
+
+        async createBackup() {
+            this.creating = true;
+            try {
+                await fetch('/api/v1/backups', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                await this.loadBackups();
+            } catch (error) {
+                console.error('Failed to create backup:', error);
+            }
+            this.creating = false;
+        },
+
+        async restoreBackup(backup) {
+            if (!confirm('Restore backup from ' + backup.name + '? Current config will be overwritten.')) return;
+            try {
+                await fetch('/api/v1/backups/' + backup.id + '/restore', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                alert('Backup restored!');
+            } catch (error) {
+                console.error('Failed to restore backup:', error);
+            }
+        },
+
+        async deleteBackup(backup) {
+            if (!confirm('Delete backup ' + backup.name + '?')) return;
+            try {
+                await fetch('/api/v1/backups/' + backup.id, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                });
+                await this.loadBackups();
+            } catch (error) {
+                console.error('Failed to delete backup:', error);
+            }
+        },
+
+        downloadBackup(backup) {
+            window.open('/api/v1/backups/' + backup.id + '/download', '_blank');
+        },
+
+        handleRestoreFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    await fetch('/api/v1/backups/restore', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        },
+                        body: e.target.result
+                    });
+                    alert('Backup restored!');
+                } catch (error) {
+                    alert('Failed to restore: ' + error);
+                }
+            };
+            reader.readAsText(file);
+        },
+
+        exportConfig() {
+            window.open('/api/v1/config/export?format=' + this.exportFormat, '_blank');
+        },
+
+        formatTime(timestamp) {
+            return new Date(timestamp).toLocaleString();
+        },
+
+        formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        get latestBackup() {
+            if (this.backups.length === 0) return null;
+            const latest = this.backups.reduce((a, b) => 
+                new Date(a.created_at) > new Date(b.created_at) ? a : b);
+            return latest ? formatTime(latest.created_at) : null;
+        }
+    }
+}
+</script>
+{% endblock %}

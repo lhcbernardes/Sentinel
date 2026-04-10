@@ -45,6 +45,7 @@
     </script>
     <!-- Google Fonts Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script>
         const i18n = {
@@ -53,12 +54,26 @@
                 en: {
                     dashboard: 'Dashboard',
                     blocking: 'Blocking',
+                    devices: 'Devices',
+                    alerts: 'Alerts',
+                    packets: 'Packets',
+                    dns_queries: 'DNS',
+                    parental: 'Parental',
+                    rules: 'Rules',
+                    users: 'Users',
+                    backups: 'Backups',
+                    settings: 'Settings',
+                    notifications: 'Notifications',
+                    threat_intel: 'Threat Intel',
+                    device_groups: 'Device Groups',
+                    dns_rewrite: 'DNS Rewrite',
+                    logs: 'Logs',
+                    ml_baselines: 'ML Baselines',
                     network_security_monitor: 'Network Security Monitor',
                     live: 'Live',
                     disconnected: 'Disconnected',
                     total_packets: 'Total Packets',
                     active_devices: 'Active Devices',
-                    alerts: 'Alerts',
                     bandwidth: 'Bandwidth',
                     traffic_over_time: 'Traffic Over Time',
                     protocol_distribution: 'Protocol Distribution',
@@ -80,7 +95,6 @@
                     custom_rules: 'Custom Rules',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Language',
-                    settings: 'Settings',
                     update_blocklists: 'Update Blocklists',
                     blocklist_updated: 'Blocklists updated successfully',
                     no_data: 'No data'
@@ -88,12 +102,26 @@
                 pt: {
                     dashboard: 'Painel',
                     blocking: 'Bloqueio',
+                    devices: 'Dispositivos',
+                    alerts: 'Alertas',
+                    packets: 'Pacotes',
+                    dns_queries: 'DNS',
+                    parental: 'Parental',
+                    rules: 'Regras',
+                    users: 'Usuários',
+                    backups: 'Backups',
+                    settings: 'Configurações',
+                    notifications: 'Notificações',
+                    threat_intel: 'Inteligência de Ameaças',
+                    device_groups: 'Grupos de Dispositivos',
+                    dns_rewrite: 'Reescrita DNS',
+                    logs: 'Logs',
+                    ml_baselines: 'Baselines de ML',
                     network_security_monitor: 'Monitor de Segurança de Rede',
                     live: 'Ao Vivo',
                     disconnected: 'Desconectado',
                     total_packets: 'Total de Pacotes',
                     active_devices: 'Dispositivos Ativos',
-                    alerts: 'Alertas',
                     bandwidth: 'Largura de Banda',
                     traffic_over_time: 'Tráfego (Linha do Tempo)',
                     protocol_distribution: 'Distribuição de Protocolos',
@@ -115,7 +143,6 @@
                     custom_rules: 'Regras Personalizadas',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Idioma',
-                    settings: 'Configurações',
                     update_blocklists: 'Atualizar Blocklists',
                     blocklist_updated: 'Blocklists atualizadas com sucesso',
                     no_data: 'Sem dados'
@@ -123,12 +150,26 @@
                 es: {
                     dashboard: 'Panel',
                     blocking: 'Bloqueo',
+                    devices: 'Dispositivos',
+                    alerts: 'Alertas',
+                    packets: 'Paquetes',
+                    dns_queries: 'DNS',
+                    parental: 'Parental',
+                    rules: 'Reglas',
+                    users: 'Usuarios',
+                    backups: 'Backups',
+                    settings: 'Configuración',
+                    notifications: 'Notificaciones',
+                    threat_intel: 'Inteligencia de Amenazas',
+                    device_groups: 'Grupos de Dispositivos',
+                    dns_rewrite: 'Reescritura DNS',
+                    logs: 'Logs',
+                    ml_baselines: 'Baselines de ML',
                     network_security_monitor: 'Monitor de Seguridad de Red',
                     live: 'En Vivo',
                     disconnected: 'Desconectado',
                     total_packets: 'Total de Paquetes',
                     active_devices: 'Dispositivos Activos',
-                    alerts: 'Alertas',
                     bandwidth: 'Ancho de Banda',
                     traffic_over_time: 'Tráfico en el Tiempo',
                     protocol_distribution: 'Distribución de Protocolos',
@@ -150,7 +191,6 @@
                     custom_rules: 'Reglas Personalizadas',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Idioma',
-                    settings: 'Configuración',
                     update_blocklists: 'Actualizar Blocklists',
                     blocklist_updated: 'Listas Negras actualizadas',
                     no_data: 'Sin datos'
@@ -207,6 +247,23 @@
         .row-enter {
             animation: slide-in 0.3s ease-out forwards;
         }
+
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: 100%;
+            margin-top: 0.5rem;
+            min-width: 180px;
+            z-index: 100;
+        }
+
+        .dropdown:hover .dropdown-menu,
+        .dropdown-menu.show {
+            display: block;
+        }
+
+        [x-cloak] { display: none !important; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -233,7 +290,47 @@
                     Blocking
                     <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-danger transition-all group-hover:w-full"></span>
                 </a>
+                <a href="/dns-queries" class="text-sm font-medium text-gray-400 hover:text-white transition-colors relative group" data-i18n="dns_queries">
+                    DNS
+                    <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-primary transition-all group-hover:w-full"></span>
+                </a>
+                <a href="/parental" class="text-sm font-medium text-gray-400 hover:text-cyber-warn transition-colors relative group" data-i18n="parental">
+                    Parental
+                    <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-warn transition-all group-hover:w-full"></span>
+                </a>
+                <a href="/alert-rules" class="text-sm font-medium text-gray-400 hover:text-white transition-colors relative group" data-i18n="rules">
+                    Rules
+                    <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-primary transition-all group-hover:w-full"></span>
+                </a>
+                <a href="/users" class="text-sm font-medium text-gray-400 hover:text-white transition-colors relative group" data-i18n="users">
+                    Users
+                    <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-primary transition-all group-hover:w-full"></span>
+                </a>
+                <a href="/backups" class="text-sm font-medium text-gray-400 hover:text-white transition-colors relative group" data-i18n="backups">
+                    Backups
+                    <span class="absolute -bottom-1 left-0 w-0 h-0.5 bg-cyber-primary transition-all group-hover:w-full"></span>
+                </a>
                 
+                <div class="h-5 w-px bg-gray-700/50"></div>
+
+                <div class="relative dropdown">
+                    <button class="flex items-center gap-1 text-sm font-medium text-gray-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        <span data-i18n="settings">Settings</span>
+                    </button>
+                    <div class="dropdown-menu glass-panel rounded-lg shadow-xl border border-gray-700/50 py-2">
+                        <a href="/notifications" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="notifications">Notifications</a>
+                        <a href="/threat-intel" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="threat_intel">Threat Intel</a>
+                        <a href="/device-groups" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="device_groups">Device Groups</a>
+                        <a href="/dns-rewrite" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="dns_rewrite">DNS Rewrite</a>
+                        <a href="/logs" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="logs">Logs</a>
+                        <a href="/ml-baselines" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="ml_baselines">ML Baselines</a>
+                    </div>
+                </div>
+
                 <div class="h-5 w-px bg-gray-700/50"></div>
 
                 <div id="connection-status" class="flex items-center gap-2 bg-gray-800/40 px-3 py-1.5 rounded-full border border-gray-700/50">
@@ -286,6 +383,18 @@
                 </div>
             `;
         };
+
+        document.querySelector('.dropdown').addEventListener('click', function(e) {
+            const menu = this.querySelector('.dropdown-menu');
+            menu.classList.toggle('show');
+            e.stopPropagation();
+        });
+
+        document.addEventListener('click', function() {
+            document.querySelectorAll('.dropdown-menu').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        });
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>

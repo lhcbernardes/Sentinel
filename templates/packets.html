@@ -1,1 +1,286 @@
-<tr><td colspan="5" class="px-4 py-4 text-center text-gray-500">No packets captured yet</td></tr>
+{% extends "base.html" %}
+
+{% block title %}Packets - Sentinel-RS{% endblock %}
+
+{% block content %}
+<div x-data="packetManager()" x-init="init()">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Total Packets</div>
+            <div class="text-3xl font-bold text-white" x-text="totalCount">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">TCP</div>
+            <div class="text-3xl font-bold text-cyber-primary" x-text="tcpCount">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">UDP</div>
+            <div class="text-3xl font-bold text-cyber-success" x-text="udpCount">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">ICMP</div>
+            <div class="text-3xl font-bold text-cyber-warn" x-text="icmpCount">0</div>
+        </div>
+        <div class="glass-panel hover-glass rounded-xl p-5">
+            <div class="text-gray-400 text-sm font-medium mb-1">Other</div>
+            <div class="text-3xl font-bold text-gray-500" x-text="otherCount">0</div>
+        </div>
+    </div>
+
+    <div class="glass-panel rounded-xl mb-6">
+        <div class="p-5 border-b border-gray-700/50">
+            <div class="flex flex-col sm:flex-row gap-4 justify-between">
+                <div class="flex flex-wrap gap-3">
+                    <button @click="filterProtocol('all')" 
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all border"
+                        :class="protocolFilter === 'all' ? 'bg-cyber-primary border-cyber-primary text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'">
+                        All
+                    </button>
+                    <button @click="filterProtocol('TCP')" 
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all border"
+                        :class="protocolFilter === 'TCP' ? 'bg-cyber-primary border-cyber-primary text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'">
+                        TCP
+                    </button>
+                    <button @click="filterProtocol('UDP')" 
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all border"
+                        :class="protocolFilter === 'UDP' ? 'bg-cyber-success border-cyber-success text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'">
+                        UDP
+                    </button>
+                    <button @click="filterProtocol('ICMP')" 
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all border"
+                        :class="protocolFilter === 'ICMP' ? 'bg-cyber-warn border-cyber-warn text-white' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white'">
+                        ICMP
+                    </button>
+                </div>
+                <div class="flex gap-3">
+                    <input type="text" x-model="searchQuery" @input="filterPackets()" 
+                        class="w-48 bg-gray-900/60 text-white px-3 py-1.5 rounded-lg border border-gray-700/50 focus:outline-none focus:border-cyber-primary transition-colors text-sm"
+                        placeholder="Search IP or port...">
+                    <button @click="clearPackets()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-1.5 rounded-lg transition-all text-sm font-medium border border-gray-700">
+                        Clear
+                    </button>
+                    <button @click="exportPackets()" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white px-4 py-1.5 rounded-lg transition-all text-sm font-medium">
+                        Export
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+            <table class="w-full">
+                <thead class="bg-gray-900/50 sticky top-0">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-24">Time</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Source</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Destination</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-20">Protocol</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-20">Length</th>
+                        <th class="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Info</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700/30">
+                    <template x-for="(packet, index) in filteredPackets" :key="index">
+                        <tr class="hover:bg-white/[0.02] transition-colors cursor-pointer" @click="showPacketDetails(packet)">
+                            <td class="px-4 py-3">
+                                <span class="font-mono text-xs text-gray-500" x-text="formatTime(packet.timestamp)"></span>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="flex flex-col">
+                                    <span class="font-mono text-sm text-gray-300" x-text="packet.src_ip"></span>
+                                    <span class="text-xs text-gray-500" x-text="packet.src_port || '-'"></span>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <div class="flex flex-col">
+                                    <span class="font-mono text-sm text-gray-300" x-text="packet.dst_ip"></span>
+                                    <span class="text-xs text-gray-500" x-text="packet.dst_port || '-'"></span>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <span class="px-2 py-0.5 text-xs font-semibold rounded"
+                                    :class="getProtocolClass(packet.protocol)"
+                                    x-text="packet.protocol"></span>
+                            </td>
+                            <td class="px-4 py-3">
+                                <span class="text-sm text-gray-400" x-text="packet.length + ' B'"></span>
+                            </td>
+                            <td class="px-4 py-3">
+                                <span class="text-sm text-gray-500 truncate max-w-xs block" x-text="packet.info || '-'"></span>
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-if="filteredPackets.length === 0">
+                        <tr>
+                            <td colspan="6" class="px-4 py-12 text-center text-gray-500">
+                                <div class="flex flex-col items-center">
+                                    <svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                                    </svg>
+                                    <span>No packets captured yet</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div x-show="showModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+        @click="showModal = false"
+        @keydown.escape.window="showModal = false">
+        <div class="glass-panel rounded-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto p-6" @click.stop>
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-white">Packet Details</h3>
+                <button @click="showModal = false" class="text-gray-400 hover:text-white">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div x-show="selectedPacket" class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Timestamp</label>
+                        <p class="text-sm text-white" x-text="selectedPacket ? formatTime(selectedPacket.timestamp) : ''"></p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Protocol</label>
+                        <span class="px-2 py-0.5 text-xs font-semibold rounded" 
+                            :class="getProtocolClass(selectedPacket?.protocol)"
+                            x-text="selectedPacket?.protocol"></span>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Source IP</label>
+                        <p class="font-mono text-sm text-white" x-text="selectedPacket?.src_ip"></p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Source Port</label>
+                        <p class="font-mono text-sm text-white" x-text="selectedPacket?.src_port || 'N/A'"></p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Destination IP</label>
+                        <p class="font-mono text-sm text-white" x-text="selectedPacket?.dst_ip"></p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Destination Port</label>
+                        <p class="font-mono text-sm text-white" x-text="selectedPacket?.dst_port || 'N/A'"></p>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500 uppercase tracking-wider">Length</label>
+                        <p class="text-sm text-white" x-text="selectedPacket?.length + ' bytes'"></p>
+                    </div>
+                </div>
+                <div x-show="selectedPacket?.info">
+                    <label class="text-xs text-gray-500 uppercase tracking-wider block mb-2">Info</label>
+                    <div class="bg-gray-900/50 rounded-lg p-4">
+                        <p class="text-sm text-gray-300 font-mono" x-text="selectedPacket?.info"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function packetManager() {
+    return {
+        packets: [],
+        filteredPackets: [],
+        protocolFilter: 'all',
+        searchQuery: '',
+        showModal: false,
+        selectedPacket: null,
+
+        init() {
+            this.loadPackets();
+            window.onPacketReceived = (packet) => {
+                this.packets.unshift(packet);
+                if (this.packets.length > 500) this.packets.pop();
+                this.filterPackets();
+            };
+        },
+
+        async loadPackets() {
+            try {
+                const response = await fetch('/api/v1/packets');
+                const data = await response.json();
+                if (data.success && data.data) {
+                    this.packets = data.data;
+                    this.filterPackets();
+                }
+            } catch (error) {
+                console.error('Failed to load packets:', error);
+            }
+        },
+
+        filterProtocol(protocol) {
+            this.protocolFilter = protocol;
+            this.filterPackets();
+        },
+
+        filterPackets() {
+            let filtered = this.packets;
+            
+            if (this.protocolFilter !== 'all') {
+                filtered = filtered.filter(p => p.protocol === this.protocolFilter);
+            }
+            
+            if (this.searchQuery) {
+                const query = this.searchQuery.toLowerCase();
+                filtered = filtered.filter(p => 
+                    (p.src_ip && p.src_ip.includes(query)) ||
+                    (p.dst_ip && p.dst_ip.includes(query)) ||
+                    (p.src_port && p.src_port.toString().includes(query)) ||
+                    (p.dst_port && p.dst_port.toString().includes(query))
+                );
+            }
+            
+            this.filteredPackets = filtered;
+        },
+
+        showPacketDetails(packet) {
+            this.selectedPacket = packet;
+            this.showModal = true;
+        },
+
+        clearPackets() {
+            this.packets = [];
+            this.filteredPackets = [];
+        },
+
+        exportPackets() {
+            const data = JSON.stringify(this.packets, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'packets-' + new Date().toISOString() + '.json';
+            a.click();
+        },
+
+        getProtocolClass(protocol) {
+            const classes = {
+                'TCP': 'bg-cyber-primary/20 text-cyber-primary border border-cyber-primary/30',
+                'UDP': 'bg-cyber-success/20 text-cyber-success border border-cyber-success/30',
+                'ICMP': 'bg-cyber-warn/20 text-cyber-warn border border-cyber-warn/30'
+            };
+            return classes[protocol] || 'bg-gray-700/50 text-gray-400 border border-gray-600/30';
+        },
+
+        formatTime(timestamp) {
+            if (!timestamp) return '-';
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        },
+
+        get totalCount() { return this.packets.length; },
+        get tcpCount() { return this.packets.filter(p => p.protocol === 'TCP').length; },
+        get udpCount() { return this.packets.filter(p => p.protocol === 'UDP').length; },
+        get icmpCount() { return this.packets.filter(p => p.protocol === 'ICMP').length; },
+        get otherCount() { return this.packets.filter(p => !['TCP', 'UDP', 'ICMP'].includes(p.protocol)).length; }
+    }
+}
+</script>
+{% endblock %}

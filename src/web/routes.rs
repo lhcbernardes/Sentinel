@@ -85,6 +85,112 @@ pub async fn blocking(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }.render().unwrap_or_default())
 }
 
+// ─── New page templates (data loaded via API) ────────────────────────────────
+
+#[derive(Template)]
+#[template(path = "login.html")]
+pub struct LoginTemplate;
+
+pub async fn login() -> impl IntoResponse {
+    Html(LoginTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "users.html")]
+pub struct UsersTemplate;
+
+pub async fn users() -> impl IntoResponse {
+    Html(UsersTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "alert-rules.html")]
+pub struct AlertRulesTemplate;
+
+pub async fn alert_rules() -> impl IntoResponse {
+    Html(AlertRulesTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "notifications.html")]
+pub struct NotificationsTemplate;
+
+pub async fn notifications() -> impl IntoResponse {
+    Html(NotificationsTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "dns-queries.html")]
+pub struct DnsQueriesTemplate;
+
+pub async fn dns_queries() -> impl IntoResponse {
+    Html(DnsQueriesTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "dns-rewrite.html")]
+pub struct DnsRewriteTemplate;
+
+pub async fn dns_rewrite() -> impl IntoResponse {
+    Html(DnsRewriteTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "parental.html")]
+pub struct ParentalTemplate;
+
+pub async fn parental() -> impl IntoResponse {
+    Html(ParentalTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "threat-intel.html")]
+pub struct ThreatIntelTemplate;
+
+pub async fn threat_intel() -> impl IntoResponse {
+    Html(ThreatIntelTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "device-groups.html")]
+pub struct DeviceGroupsTemplate;
+
+pub async fn device_groups() -> impl IntoResponse {
+    Html(DeviceGroupsTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "backups.html")]
+pub struct BackupsTemplate;
+
+pub async fn backups() -> impl IntoResponse {
+    Html(BackupsTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "logs.html")]
+pub struct LogsTemplate;
+
+pub async fn logs() -> impl IntoResponse {
+    Html(LogsTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "ml-baselines.html")]
+pub struct MlBaselinesTemplate;
+
+pub async fn ml_baselines() -> impl IntoResponse {
+    Html(MlBaselinesTemplate.render().unwrap_or_default())
+}
+
+#[derive(Template)]
+#[template(path = "settings.html")]
+pub struct SettingsTemplate;
+
+pub async fn settings() -> impl IntoResponse {
+    Html(SettingsTemplate.render().unwrap_or_default())
+}
+
 // ─── request / response types ─────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
@@ -250,12 +356,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .allow_credentials(true);
 
     Router::new()
-        // Páginas HTML públicas (shells de UI, sem dados críticos)
+        // Login page (public)
+        .route("/login", get(login))
+        // Main pages
         .route("/", get(index))
         .route("/devices", get(devices))
         .route("/alerts", get(alerts))
         .route("/packets", get(packets))
         .route("/blocking", get(blocking))
+        // Settings pages
+        .route("/users", get(users))
+        .route("/alert-rules", get(alert_rules))
+        .route("/notifications", get(notifications))
+        .route("/dns-queries", get(dns_queries))
+        .route("/dns-rewrite", get(dns_rewrite))
+        .route("/parental", get(parental))
+        .route("/threat-intel", get(threat_intel))
+        .route("/device-groups", get(device_groups))
+        .route("/backups", get(backups))
+        .route("/logs", get(logs))
+        .route("/ml-baselines", get(ml_baselines))
+        .route("/settings", get(settings))
         // SSE — requires token via query param (/events?token=xxx)
         .route("/events", get(event_stream))
         // APIs protegidas (exigem Bearer token via middleware + admin check nos handlers)
