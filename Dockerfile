@@ -11,9 +11,8 @@ RUN apt-get update && apt-get install -y \
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
-COPY data ./data
 
-RUN cargo build --release --bin sentinel-rs
+RUN mkdir -p data && cargo build --release --bin sentinel-rs
 
 FROM debian:bookworm-slim
 
@@ -27,7 +26,6 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/sentinel-rs /usr/local/bin/
 COPY --from=builder /app/templates ./templates
-COPY --from=builder /app/data ./data
 
 RUN mkdir -p /app/logs /app/data && \
     chown -R sentinel:sentinel /app
