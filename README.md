@@ -6,16 +6,16 @@
   </p>
 
   <p>
-    <a href="https://github.com/sentinel-rs/sentinel-rs/actions"><img src="https://img.shields.io/github/actions/workflow/status/sentinel-rs/sentinel-rs/CI?style=for-the-badge" alt="CI Status" /></a>
+    <a href="https://github.com/lhcbernardes/Sentinel/actions"><img src="https://img.shields.io/github/actions/workflow/status/lhcbernardes/Sentinel/ci.yml?style=for-the-badge&logo=github-actions" alt="CI Status" /></a>
     <a href="https://crates.io/crates/sentinel-rs"><img src="https://img.shields.io/crates/v/sentinel-rs?style=for-the-badge" alt="crates.io" /></a>
     <img src="https://img.shields.io/badge/rust-1.70%2B-EF4A25?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Version" />
-    <a href="https://github.com/sentinel-rs/sentinel-rs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/sentinel-rs/sentinel-rs?style=for-the-badge" alt="License" /></a>
+    <a href="https://github.com/lhcbernardes/Sentinel/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lhcbernardes/Sentinel?style=for-the-badge" alt="License" /></a>
   </p>
 
   <p>
-    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/framework-Axum-000000?style=for-the-badge" alt="Axum Framework" /></a>
-    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/UI-TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" /></a>
-    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/security-JWT%20(HS256)-blue?style=for-the-badge&logo=jsonwebtokens" alt="JWT Secured" /></a>
+    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/framework-Axum-000000?style=for-the-badge" alt="Axum Framework" /></a>
+    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/UI-TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" /></a>
+    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/security-JWT%20(HS256)-blue?style=for-the-badge&logo=jsonwebtokens" alt="JWT Secured" /></a>
     <img src="https://img.shields.io/badge/SSE-Live%20Events-FF6B6B?style=for-the-badge" alt="Server-Sent Events" />
   </p>
 </div>
