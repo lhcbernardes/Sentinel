@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::anomaly::AnomalyDetector;
 use crate::db::Database;
@@ -41,8 +41,26 @@ impl Sniffer {
         let db_shutdown = shutdown.clone();
         let db = database.clone();
         std::thread::spawn(move || {
-            let mut batch = Vec::with_capacity(100);
+            let mut batch = Vec::with_capacity(256); // Increased initial capacity
+            let mut last_flush = Instant::now();
+            const FLUSH_INTERVAL_MS: u64 = 100; // More frequent flushing
+            const MAX_BATCH_SIZE: usize = 512; // Larger max batch size
+
             loop {
+                let timeout = if batch.is_empty() {
+                    Duration::from_millis(FLUSH_INTERVAL_MS)
+                } else {
+                    // Adjust timeout based on batch size to prevent starvation
+                    let elapsed = last_flush.elapsed();
+                    if elapsed.as_millis() >= FLUSH_INTERVAL_MS as u128 {
+                        Duration::from_millis(0) // Time to flush
+                    } else {
+                        Duration::from_millis(
+                            FLUSH_INTERVAL_MS.saturating_sub(elapsed.as_millis() as u64),
+                        )
+                    }
+                };
+
                 if db_shutdown.load(Ordering::Relaxed) && db_rx.try_recv().is_err() {
                     if !batch.is_empty() {
                         db.save_packets_batch(&batch);
@@ -50,12 +68,13 @@ impl Sniffer {
                     break;
                 }
 
-                match db_rx.recv_timeout(Duration::from_millis(500)) {
+                match db_rx.recv_timeout(timeout) {
                     Ok(packet) => {
                         batch.push(packet);
+                        // Process any additional available packets without blocking
                         while let Ok(p) = db_rx.try_recv() {
                             batch.push(p);
-                            if batch.len() >= 100 {
+                            if batch.len() >= MAX_BATCH_SIZE {
                                 break;
                             }
                         }
@@ -64,9 +83,14 @@ impl Sniffer {
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
 
-                if !batch.is_empty() {
+                // Flush if we have enough packets or time has elapsed
+                if !batch.is_empty()
+                    && (batch.len() >= MAX_BATCH_SIZE
+                        || last_flush.elapsed().as_millis() >= FLUSH_INTERVAL_MS as u128)
+                {
                     db.save_packets_batch(&batch);
                     batch.clear();
+                    last_flush = Instant::now();
                 }
             }
             tracing::info!("Database writer thread stopped");
@@ -81,17 +105,62 @@ impl Sniffer {
             let ad = worker_anomaly_detector.clone();
             let sd = worker_shutdown.clone();
             std::thread::spawn(move || {
+                let mut batch = Vec::with_capacity(32);
+                let mut last_process = Instant::now();
+                const PROCESS_INTERVAL_MS: u64 = 10; // Process every 10ms max latency
+                const MAX_BATCH_SIZE: usize = 128;
+
                 loop {
+                    let timeout = if batch.is_empty() {
+                        Duration::from_millis(PROCESS_INTERVAL_MS)
+                    } else {
+                        // Adjust timeout based on batch size and time elapsed
+                        let elapsed = last_process.elapsed();
+                        if elapsed.as_millis() >= PROCESS_INTERVAL_MS as u128 {
+                            Duration::from_millis(0) // Time to process
+                        } else {
+                            Duration::from_millis(
+                                PROCESS_INTERVAL_MS.saturating_sub(elapsed.as_millis() as u64),
+                            )
+                        }
+                    };
+
                     if sd.load(Ordering::Relaxed) {
+                        // Process remaining packets before shutting down
+                        if !batch.is_empty() {
+                            for packet in batch.drain(..) {
+                                dm.process_packet(&packet);
+                                ad.analyze(&packet);
+                            }
+                        }
                         break;
                     }
-                    match rx.recv_timeout(Duration::from_millis(100)) {
+
+                    match rx.recv_timeout(timeout) {
                         Ok(packet) => {
+                            batch.push(packet);
+                            // Process any additional available packets without blocking
+                            while let Ok(p) = rx.try_recv() {
+                                batch.push(p);
+                                if batch.len() >= MAX_BATCH_SIZE {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    }
+
+                    // Process batch if we have enough packets or time has elapsed
+                    if !batch.is_empty()
+                        && (batch.len() >= MAX_BATCH_SIZE
+                            || last_process.elapsed().as_millis() >= PROCESS_INTERVAL_MS as u128)
+                    {
+                        for packet in batch.drain(..) {
                             dm.process_packet(&packet);
                             ad.analyze(&packet);
                         }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                        last_process = Instant::now();
                     }
                 }
                 tracing::debug!("Worker {} stopped", i);
@@ -240,18 +309,20 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
         _ => return None,
     };
 
-    let src_mac = data.get(0..6).map(|m| {
-        format!(
+    // Optimize MAC address formatting to avoid String allocation when possible
+    let (src_mac, dst_mac) = if data.len() >= 12 {
+        let src_mac = Some(format!(
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            m[0], m[1], m[2], m[3], m[4], m[5]
-        )
-    });
-    let dst_mac = data.get(6..12).map(|m| {
-        format!(
+            data[0], data[1], data[2], data[3], data[4], data[5]
+        ));
+        let dst_mac = Some(format!(
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            m[0], m[1], m[2], m[3], m[4], m[5]
-        )
-    });
+            data[6], data[7], data[8], data[9], data[10], data[11]
+        ));
+        (src_mac, dst_mac)
+    } else {
+        (None, None)
+    };
 
     Some(PacketInfo {
         timestamp: chrono::Utc::now().timestamp_millis(),

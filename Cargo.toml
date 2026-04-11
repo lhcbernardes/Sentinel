@@ -46,10 +46,14 @@ glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
+criterion = "0.5"
 
 [features]
 default = []
 dev = ["tracing-subscriber/env-filter"]
+
+[profile.bench]
+debug = true
 
 [[bin]]
 name = "sentinel-rs"

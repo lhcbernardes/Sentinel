@@ -210,30 +210,44 @@ impl Database {
         Ok(())
     }
 
-    /// Batch insert packets using multi-row INSERT for better performance.
+    /// Batch insert packets using multi-row INSERT wrapped in transaction for better performance.
     pub fn save_packets_batch(&self, packets: &[crate::sniffer::PacketInfo]) {
         if packets.is_empty() {
             return;
         }
 
-        let mut values = Vec::with_capacity(packets.len());
+        let conn = self.conn.lock();
+
+        // Start transaction
+        if let Err(e) = conn.execute_batch("BEGIN") {
+            tracing::warn!("Failed to begin transaction for batch insert: {}", e);
+            return;
+        }
+
+        // Build the multi-row INSERT statement
+        let mut values = Vec::with_capacity(packets.len() * 100);
         for packet in packets {
             let src_ip = packet.src_ip.to_string();
             let dst_ip = packet.dst_ip.to_string();
             let protocol = packet.protocol.to_string();
             let src_port = packet.src_port.unwrap_or(0);
             let dst_port = packet.dst_port.unwrap_or(0);
-            let src_mac = packet.src_mac.as_deref().unwrap_or("");
-            let dst_mac = packet.dst_mac.as_deref().unwrap_or("");
+            let src_mac = packet.src_mac.as_deref().unwrap_or("").replace('\'', "''");
+            let dst_mac = packet.dst_mac.as_deref().unwrap_or("").replace('\'', "''");
+
+            // Escape single quotes in string values
+            let src_ip_escaped = src_ip.replace('\'', "''");
+            let dst_ip_escaped = dst_ip.replace('\'', "''");
+            let protocol_escaped = protocol.replace('\'', "''");
 
             values.push(format!(
                 "({}, '{}', '{}', {}, {}, '{}', {}, '{}', '{}')",
                 packet.timestamp,
-                src_ip,
-                dst_ip,
+                src_ip_escaped,
+                dst_ip_escaped,
                 src_port,
                 dst_port,
-                protocol,
+                protocol_escaped,
                 packet.size,
                 src_mac,
                 dst_mac
@@ -245,9 +259,16 @@ impl Database {
             values.join(",")
         );
 
-        let conn = self.conn.lock();
+        // Execute the batch insert
         if let Err(e) = conn.execute_batch(&query) {
             tracing::warn!("Failed to batch insert packets: {}", e);
+            let _ = conn.execute_batch("ROLLBACK");
+            return;
+        }
+
+        // Commit transaction
+        if let Err(e) = conn.execute_batch("COMMIT") {
+            tracing::warn!("Failed to commit batch insert transaction: {}", e);
         }
     }
 
