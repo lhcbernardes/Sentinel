@@ -2,6 +2,7 @@ use crate::anomaly::portscan::{PortScanAlert, PortScanDetector};
 use crate::sniffer::packet::{PacketInfo, Protocol};
 use chrono::Utc;
 use parking_lot::RwLock;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use tokio::sync::broadcast;
@@ -87,6 +88,7 @@ pub struct AnomalyDetector {
     port_scan_detector: RwLock<PortScanDetector>,
     recent_alerts: RwLock<VecDeque<Alert>>,
     alert_tx: broadcast::Sender<Alert>,
+    packet_batch_size: usize,
 }
 
 impl AnomalyDetector {
@@ -95,6 +97,21 @@ impl AnomalyDetector {
             port_scan_detector: RwLock::new(PortScanDetector::new()),
             recent_alerts: RwLock::new(VecDeque::with_capacity(MAX_ALERTS)),
             alert_tx,
+            packet_batch_size: 128, // Process 128 packets at once
+        }
+    }
+
+    /// Create a new anomaly detector with custom batch settings
+    pub fn with_batch_settings(
+        alert_tx: broadcast::Sender<Alert>,
+        packet_batch_size: usize,
+        _max_batch_delay_ms: u64,
+    ) -> Self {
+        Self {
+            port_scan_detector: RwLock::new(PortScanDetector::new()),
+            recent_alerts: RwLock::new(VecDeque::with_capacity(MAX_ALERTS)),
+            alert_tx,
+            packet_batch_size,
         }
     }
 
@@ -119,6 +136,61 @@ impl AnomalyDetector {
                     let _ = self.alert_tx.send(alert);
                 }
             }
+        }
+    }
+
+    /// Batch analyze packets with Rayon parallelization
+    pub fn batch_analyze(&self, packets: &[PacketInfo]) -> Vec<Alert> {
+        let alerts: Vec<Alert> = packets
+            .par_iter()
+            .filter_map(|packet| {
+                if packet.protocol == Protocol::Tcp {
+                    if let Some(dst_port) = packet.dst_port {
+                        let scan_alert = {
+                            let detector = self.port_scan_detector.read();
+                            detector.check(&packet.src_ip.to_string(), dst_port, true)
+                        };
+
+                        if let Some(scan_alert) = scan_alert {
+                            Some(Alert::port_scan(scan_alert))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Add alerts to recent alerts and broadcast
+        for alert in &alerts {
+            info!("{}", alert.message);
+
+            let mut recent = self.recent_alerts.write();
+            if recent.len() >= MAX_ALERTS {
+                recent.pop_front();
+            }
+            recent.push_back(alert.clone());
+
+            let _ = self.alert_tx.send(alert.clone());
+        }
+
+        alerts
+    }
+
+    /// Process packets in batches with parallel analysis
+    pub fn process_packets_parallel(&self, packets: Vec<PacketInfo>) -> Vec<Alert> {
+        if packets.len() <= self.packet_batch_size {
+            self.batch_analyze(&packets)
+        } else {
+            // Process in batches to avoid memory issues with large datasets
+            packets
+                .chunks(self.packet_batch_size)
+                .flat_map(|chunk| self.batch_analyze(chunk))
+                .collect()
         }
     }
 

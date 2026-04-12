@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod rules;
 
-pub use rules::{AlertAction, AlertCondition, AlertContext, AlertRule, AlertRuleEngine};
+pub use rules::{AlertAction, AlertCondition, AlertContext, AlertRule, AlertRuleEngine, ComparisonOp, AlertSeverity as RuleSeverity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Serialize, Deserialize)]
 pub enum AlertSeverity {

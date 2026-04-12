@@ -42,32 +42,63 @@
             </div>
         </div>
         <div class="p-5">
-            <div x-show="lookupResult" class="mb-6 p-4 rounded-lg border"
-                :class="lookupResult.malicious ? 'bg-cyber-danger/10 border-cyber-danger/30' : 'bg-cyber-success/10 border-cyber-success/30'">
-                <div class="flex items-center gap-3 mb-3">
-                    <span class="text-2xl" x-text="lookupResult.malicious ? '⚠️' : '✓'"></span>
-                    <span class="font-semibold" :class="lookupResult.malicious ? 'text-cyber-danger' : 'text-cyber-success'"
-                        x-text="lookupResult.malicious ? 'Threat Detected' : 'Safe'"></span>
+            <template x-if="lookupResult.has_data">
+                <div class="mb-6 p-6 rounded-xl border animate-slide-in relative overflow-hidden glass-panel"
+                    :class="lookupResult.malicious ? 'border-cyber-danger/40' : 'border-cyber-success/40'">
+                    <!-- Backdrop Glow -->
+                    <div class="absolute inset-0 opacity-10 pointer-events-none"
+                         :class="lookupResult.malicious ? 'bg-cyber-danger' : 'bg-cyber-success'"></div>
+                    
+                    <div class="relative z-10">
+                        <div class="flex items-center gap-4 mb-5">
+                            <div class="w-12 h-12 rounded-full flex items-center justify-center text-2xl shadow-lg"
+                                 :class="lookupResult.malicious ? 'bg-cyber-danger/20 text-cyber-danger shadow-cyber-danger/20' : 'bg-cyber-success/20 text-cyber-success shadow-cyber-success/20'">
+                                <span x-text="lookupResult.malicious ? '🛡️' : '🛡️'"></span>
+                            </div>
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs uppercase tracking-widest font-bold opacity-60">Status Assessment</span>
+                                    <span class="px-2 py-0.5 rounded text-[0.6rem] font-bold uppercase"
+                                          :class="lookupResult.malicious ? 'bg-cyber-danger/20 text-cyber-danger' : 'bg-cyber-success/20 text-cyber-success'"
+                                          x-text="lookupResult.malicious ? 'Threat' : 'Secure'"></span>
+                                </div>
+                                <h3 class="text-xl font-bold font-outfit" :class="lookupResult.malicious ? 'text-cyber-danger' : 'text-cyber-success'"
+                                    x-text="lookupResult.malicious ? 'Threat Detected' : 'No Threat Found'"></h3>
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 bg-black/20 p-4 rounded-lg border border-white/5">
+                            <div class="space-y-1">
+                                <span class="text-[0.65rem] uppercase tracking-wider text-gray-500 font-bold">Indicator / Target</span>
+                                <div class="font-mono text-white text-lg" x-text="lookupResult.indicator"></div>
+                            </div>
+                            <div class="space-y-1">
+                                <span class="text-[0.65rem] uppercase tracking-wider text-gray-500 font-bold">Classification</span>
+                                <div class="text-white text-lg font-outfit" x-text="lookupResult.type"></div>
+                            </div>
+                            <template x-if="lookupResult.threat_type">
+                                <div class="space-y-1">
+                                    <span class="text-[0.65rem] uppercase tracking-wider text-gray-500 font-bold">Threat Mechanism</span>
+                                    <div class="text-cyber-danger font-bold uppercase text-sm" x-text="lookupResult.threat_type"></div>
+                                </div>
+                            </template>
+                            <template x-if="lookupResult.confidence">
+                                <div class="space-y-1">
+                                    <span class="text-[0.65rem] uppercase tracking-wider text-gray-500 font-bold">Confidence Score</span>
+                                    <div class="flex items-center gap-2">
+                                        <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                                            <div class="h-full transition-all duration-1000" 
+                                                 :style="`width: ${lookupResult.confidence}%;`"
+                                                 :class="lookupResult.confidence > 70 ? 'bg-cyber-danger' : 'bg-cyber-warn'"></div>
+                                        </div>
+                                        <span class="text-white font-mono text-xs" x-text="lookupResult.confidence + '%'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                        <span class="text-gray-500">Indicator:</span>
-                        <span class="font-mono text-white ml-2" x-text="lookupResult.indicator"></span>
-                    </div>
-                    <div>
-                        <span class="text-gray-500">Type:</span>
-                        <span class="text-white ml-2" x-text="lookupResult.type"></span>
-                    </div>
-                    <div x-show="lookupResult.threat_type">
-                        <span class="text-gray-500">Threat Type:</span>
-                        <span class="text-cyber-danger ml-2" x-text="lookupResult.threat_type"></span>
-                    </div>
-                    <div x-show="lookupResult.confidence">
-                        <span class="text-gray-500">Confidence:</span>
-                        <span class="text-cyber-warn ml-2" x-text="lookupResult.confidence + '%'"></span>
-                    </div>
-                </div>
-            </div>
+            </template>
         </div>
     </div>
 
@@ -148,7 +179,14 @@
 function threatIntelManager() {
     return {
         searchQuery: '',
-        lookupResult: null,
+        lookupResult: { 
+            malicious: false, 
+            indicator: '', 
+            type: 'Unknown', 
+            threat_type: null, 
+            confidence: 0,
+            has_data: false 
+        },
         lookupHistory: [],
         stats: { malicious_ips: 0, malicious_domains: 0, feeds_enabled: 0 },
         config: {
@@ -187,7 +225,7 @@ function threatIntelManager() {
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
-                    this.lookupResult = data.data;
+                    this.lookupResult = { ...data.data, has_data: true };
                     this.lookupHistory.unshift({ ...data.data, timestamp: new Date().toISOString() });
                     if (this.lookupHistory.length > 20) this.lookupHistory.pop();
                 }

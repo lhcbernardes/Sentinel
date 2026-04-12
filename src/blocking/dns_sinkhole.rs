@@ -1,3 +1,4 @@
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -6,7 +7,6 @@ use std::time::Instant;
 use tokio::net::UdpSocket;
 
 use crate::blocking::blocklist::Blocklist;
-use crate::utils::LruCache;
 
 #[derive(Clone)]
 struct CachedResponse {
@@ -33,7 +33,7 @@ pub struct DnsSinkhole {
     query_count: AtomicU64,
     allow_fallback: bool,
     platform_supported: RwLock<bool>,
-    cache: RwLock<LruCache<String, CachedResponse>>,
+    cache: DashMap<String, CachedResponse>,
     query_log: RwLock<VecDeque<DnsQueryRecord>>,
 }
 
@@ -41,14 +41,32 @@ impl DnsSinkhole {
     pub fn new(blocklist: Arc<Blocklist>, allow_fallback: bool) -> Self {
         let platform_supported = Self::check_platform_support();
 
-        Self {
+        let sinkhole = Self {
             blocklist,
             blocked_count: AtomicU64::new(0),
             query_count: AtomicU64::new(0),
             allow_fallback,
             platform_supported: RwLock::new(platform_supported),
-            cache: RwLock::new(LruCache::new(10000)),
+            cache: DashMap::new(),
             query_log: RwLock::new(VecDeque::with_capacity(5000)),
+        };
+
+        // Pre-load common domains for faster initial lookups
+        sinkhole.preload_common_domains();
+        sinkhole
+    }
+
+    fn preload_common_domains(&self) {
+        let common_domains = vec![
+            "google.com", "google-analytics.com", "doubleclick.net",
+            "facebook.com", "fbcdn.net", "amazon.com", "aws.amazon.com",
+            "microsoft.com", "apple.com", "netflix.com"
+        ];
+        
+        for domain in common_domains {
+            // We just warm up the cache or blocklist checks if needed.
+            // For now, we pre-warm the blocklist check if it's expensive.
+            let _ = self.blocklist.is_blocked(domain);
         }
     }
 
@@ -132,13 +150,10 @@ impl DnsSinkhole {
         let domain = self.extract_domain(packet)?;
         let domain_lower = domain.to_lowercase();
 
-        // Check cache first - use read lock for lookups
-        {
-            let cache = self.cache.read();
-            if let Some(cached) = cache.get(&domain_lower) {
-                if !cached.is_expired() {
-                    return Some(cached.data.clone());
-                }
+        // Check cache first - DashMap provides lock-free reads
+        if let Some(cached) = self.cache.get(domain_lower.as_str()) {
+            if !cached.is_expired() {
+                return Some(cached.data.clone());
             }
         }
 
@@ -182,10 +197,9 @@ impl DnsSinkhole {
             return None;
         };
 
-        // Cache the response for 60 seconds
-        let cached_response = CachedResponse::new(response.clone(), 60);
-        let mut cache = self.cache.write();
-        cache.insert(domain_lower, cached_response);
+        // Cache the response with a more granular TTL (30 seconds)
+        let cached_response = CachedResponse::new(response.clone(), 30);
+        self.cache.insert(domain_lower, cached_response);
 
         Some(response)
     }
@@ -294,13 +308,37 @@ impl DnsSinkhole {
             queries: self.query_count.load(Ordering::Relaxed),
             blocked: self.blocked_count.load(Ordering::Relaxed),
             platform_supported: *self.platform_supported.read(),
-            cache_size: self.cache.read().len(),
+            cache_size: self.cache.len(),
         }
     }
 
     pub fn is_supported(&self) -> bool {
         *self.platform_supported.read()
     }
+
+    /// Clean up expired cache entries
+    pub fn cleanup_cache(&self) {
+        self.cache.retain(|_, cached| !cached.is_expired());
+    }
+
+    /// Get cache hit rate statistics
+    pub fn cache_stats(&self) -> CacheStats {
+        let total_entries = self.cache.len();
+        let expired_count = self.cache.iter().filter(|r| r.value().is_expired()).count();
+        
+        CacheStats {
+            total_entries,
+            expired_count,
+            active_entries: total_entries - expired_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CacheStats {
+    pub total_entries: usize,
+    pub expired_count: usize,
+    pub active_entries: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

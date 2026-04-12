@@ -9,7 +9,9 @@ use axum::{
 };
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tower_http::cors::CorsLayer;
+use dashmap::DashMap;
 
 use crate::anomaly::detector::Alert;
 use crate::blocking::BlocklistUpdater;
@@ -19,6 +21,70 @@ use crate::AppState;
 
 use super::auth::require_admin;
 
+// ─── template cache ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct CachedTemplate {
+    content: String,
+    expires_at: Instant,
+    _ttl: Duration,
+}
+
+impl CachedTemplate {
+    fn new(content: String, ttl: Duration) -> Self {
+        Self {
+            content,
+            expires_at: Instant::now() + ttl,
+            _ttl: ttl,
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        Instant::now() >= self.expires_at
+    }
+}
+
+/// Template cache for improved performance
+pub struct TemplateCache {
+    cache: DashMap<String, CachedTemplate>,
+    default_ttl: Duration,
+}
+
+impl TemplateCache {
+    pub fn new(default_ttl_secs: u64) -> Self {
+        Self {
+            cache: DashMap::new(),
+            default_ttl: Duration::from_secs(default_ttl_secs),
+        }
+    }
+
+    pub fn get<T: Template>(&self, template: &T) -> Option<String> {
+        let cache_key = std::any::type_name::<T>().to_string();
+
+        if let Some(cached) = self.cache.get(&cache_key) {
+            if !cached.is_expired() {
+                return Some(cached.content.clone());
+            }
+        }
+
+        let rendered = template.render().unwrap_or_default();
+        let cached = CachedTemplate::new(rendered.clone(), self.default_ttl);
+        self.cache.insert(cache_key.to_string(), cached);
+
+        Some(rendered)
+    }
+
+    pub fn cleanup(&self) {
+        self.cache.retain(|_, cached| !cached.is_expired());
+    }
+}
+
+impl Default for TemplateCache {
+    fn default() -> Self {
+        Self::new(300) // 5 minutes default TTL
+    }
+}
+
 // ─── templates ───────────────────────────────────────────────────────────────
 
 #[derive(Template)]
@@ -26,6 +92,8 @@ use super::auth::require_admin;
 pub struct IndexTemplate;
 
 pub async fn index() -> impl IntoResponse {
+    // For this simple template, we'll render it directly
+    // In a real implementation, we'd use the template cache
     Html(IndexTemplate.render().unwrap_or_default())
 }
 
@@ -37,7 +105,11 @@ pub struct DevicesTemplate {
 
 pub async fn devices(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let devices = state.device_manager.get_all();
-    Html(DevicesTemplate { devices }.render().unwrap_or_default())
+    let template = DevicesTemplate { devices };
+    match state.template_cache.get(&template) {
+        Some(html) => Html(html).into_response(),
+        None => Html(template.render().unwrap_or_default()).into_response(),
+    }
 }
 
 #[derive(Template)]
@@ -48,7 +120,11 @@ pub struct AlertsTemplate {
 
 pub async fn alerts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let alerts = state.anomaly_detector.get_recent_alerts();
-    Html(AlertsTemplate { alerts }.render().unwrap_or_default())
+    let template = AlertsTemplate { alerts };
+    match state.template_cache.get(&template) {
+        Some(html) => Html(html).into_response(),
+        None => Html(template.render().unwrap_or_default()).into_response(),
+    }
 }
 
 #[derive(Template)]
@@ -59,7 +135,11 @@ pub struct PacketsTemplate {
 
 pub async fn packets(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let packets: Vec<_> = state.packet_cache.read().iter().cloned().collect();
-    Html(PacketsTemplate { packets }.render().unwrap_or_default())
+    let template = PacketsTemplate { packets };
+    match state.template_cache.get(&template) {
+        Some(html) => Html(html).into_response(),
+        None => Html(template.render().unwrap_or_default()).into_response(),
+    }
 }
 
 #[derive(Template)]
@@ -77,16 +157,17 @@ pub async fn blocking(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let dns_stats = state.dns_sinkhole.stats();
     let firewall_stats = state.firewall.stats();
 
-    Html(
-        BlockingTemplate {
-            blocklist_stats,
-            dns_stats,
-            firewall_stats,
-            blocked_ips,
-        }
-        .render()
-        .unwrap_or_default(),
-    )
+    let template = BlockingTemplate {
+        blocklist_stats,
+        dns_stats,
+        firewall_stats,
+        blocked_ips,
+    };
+
+    match state.template_cache.get(&template) {
+        Some(html) => Html(html).into_response(),
+        None => Html(template.render().unwrap_or_default()).into_response(),
+    }
 }
 
 // ─── New page templates (data loaded via API) ────────────────────────────────
@@ -320,18 +401,34 @@ pub async fn event_stream(
     let mut alert_rx = state.alert_tx.subscribe();
 
     let stream = async_stream::stream! {
+        let mut packet_batch = Vec::with_capacity(10);
+        let mut last_send = Instant::now();
+        
         loop {
             tokio::select! {
                 packet = rx.recv() => {
                     if let Ok(p) = packet {
-                        let json = serde_json::to_string(&p).unwrap_or_default();
-                        yield Ok(Event::default().event("packet").data(json));
+                        packet_batch.push(p);
+                        if packet_batch.len() >= 10 || last_send.elapsed() >= Duration::from_millis(500) {
+                            let json = serde_json::to_string(&packet_batch).unwrap_or_default();
+                            yield Ok(axum::response::sse::Event::default().event("packet").data(json));
+                            packet_batch.clear();
+                            last_send = Instant::now();
+                        }
                     }
                 }
                 alert = alert_rx.recv() => {
                     if let Ok(a) = alert {
                         let json = serde_json::to_string(&a).unwrap_or_default();
-                        yield Ok(Event::default().event("alert").data(json));
+                        yield Ok(axum::response::sse::Event::default().event("alert").data(json));
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if !packet_batch.is_empty() && last_send.elapsed() >= Duration::from_millis(500) {
+                        let json = serde_json::to_string(&packet_batch).unwrap_or_default();
+                        yield Ok(axum::response::sse::Event::default().event("packet").data(json));
+                        packet_batch.clear();
+                        last_send = Instant::now();
                     }
                 }
             }
@@ -397,6 +494,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             state.clone(),
             super::auth::auth_middleware,
         ))
+        .layer(tower_http::compression::CompressionLayer::new())
         .layer(cors)
         .with_state(state)
 }

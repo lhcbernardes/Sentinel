@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,26 +8,61 @@ use crate::anomaly::AnomalyDetector;
 use crate::db::Database;
 use crate::devices::DeviceManager;
 use crate::sniffer::packet::{PacketInfo, Protocol};
+use bytes::BytesMut;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio::sync::broadcast;
 
-thread_local! {
-    static MAC_BUFFER: RefCell<(String, String)> = RefCell::new((
-        String::with_capacity(17),
-        String::with_capacity(17),
-    ));
+
+// Packet pool for reducing allocations
+#[derive(Clone)]
+pub struct PacketPool {
+    pool: Arc<parking_lot::Mutex<Vec<BytesMut>>>,
+    buffer_size: usize,
+}
+
+impl PacketPool {
+    pub fn new(buffer_size: usize, pool_size: usize) -> Self {
+        let pool = Arc::new(parking_lot::Mutex::new(
+            (0..pool_size)
+                .map(|_| BytesMut::with_capacity(buffer_size))
+                .collect(),
+        ));
+        Self { pool, buffer_size }
+    }
+
+    pub fn get(&self) -> BytesMut {
+        let mut pool = self.pool.lock();
+        pool.pop()
+            .unwrap_or_else(|| BytesMut::with_capacity(self.buffer_size))
+    }
+
+    pub fn put(&self, mut buffer: BytesMut) {
+        buffer.clear();
+        let mut pool = self.pool.lock();
+        if pool.len() < 1000 {
+            // Limit pool size
+            pool.push(buffer);
+        }
+    }
+}
+
+impl Default for PacketPool {
+    fn default() -> Self {
+        Self::new(2048, 100)
+    }
 }
 
 #[inline]
-fn format_mac_fast(bytes: &[u8; 6], buf: &mut String) {
-    use std::fmt::Write;
-    buf.clear();
-    write!(
-        buf,
-        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
-    )
-    .unwrap();
+fn format_mac(bytes: &[u8; 6]) -> String {
+    let mut s = String::with_capacity(17);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 {
+            s.push(':');
+        }
+        s.push(std::char::from_digit((b >> 4) as u32, 16).unwrap());
+        s.push(std::char::from_digit((b & 0xf) as u32, 16).unwrap());
+    }
+    s
 }
 
 pub struct Sniffer {
@@ -176,9 +211,11 @@ impl Sniffer {
                         && (batch.len() >= MAX_BATCH_SIZE
                             || last_process.elapsed().as_millis() >= PROCESS_INTERVAL_MS as u128)
                     {
+                        // Use the new batch_analyze for parallel processing of the batch itself
+                        ad.batch_analyze(&batch);
+                        
                         for packet in batch.drain(..) {
                             dm.process_packet(&packet);
-                            ad.analyze(&packet);
                         }
                         last_process = Instant::now();
                     }
@@ -330,12 +367,22 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
     };
 
     let (src_mac, dst_mac) = if data.len() >= 12 {
-        MAC_BUFFER.with(|buffer| {
-            let mut buf = buffer.borrow_mut();
-            format_mac_fast(&data[0..6].try_into().unwrap(), &mut buf.0);
-            format_mac_fast(&data[6..12].try_into().unwrap(), &mut buf.1);
-            (Some(buf.0.clone()), Some(buf.1.clone()))
-        })
+        let src_mac_bytes: &[u8; 6] = &data[0..6].try_into().unwrap();
+        let dst_mac_bytes: &[u8; 6] = &data[6..12].try_into().unwrap();
+
+        let src_mac = if src_mac_bytes.iter().any(|&b| b != 0) {
+            Some(Cow::Owned(format_mac(src_mac_bytes)))
+        } else {
+            None
+        };
+
+        let dst_mac = if dst_mac_bytes.iter().any(|&b| b != 0) {
+            Some(Cow::Owned(format_mac(dst_mac_bytes)))
+        } else {
+            None
+        };
+
+        (src_mac, dst_mac)
     } else {
         (None, None)
     };

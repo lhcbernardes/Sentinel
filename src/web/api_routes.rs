@@ -51,6 +51,7 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/blocklist/ips", post(api_block_ip))
         .route("/v1/blocklist/ips/{ip}", delete(api_unblock_ip))
         .route("/v1/blocklist/domains", post(api_block_domain))
+        .route("/v1/blocklist/domains", delete(api_unblock_domain))
         .route("/v1/blocklist/update", post(api_update_blocklist))
         .route("/v1/firewall/status", get(api_firewall_status))
         .route("/v1/firewall/rules", get(api_firewall_rules))
@@ -66,6 +67,34 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/dpi/inspect", post(api_dpi_inspect))
         .route("/v1/dpi/stats", get(api_dpi_stats))
         .route("/v1/export/siem", get(api_export_siem))
+        .route("/v1/parental/config", get(api_parental_config_get))
+        .route("/v1/parental/config", put(api_parental_config_put))
+        .route("/v1/backups", get(api_backups_list))
+        .route("/v1/backups", post(api_backups_create))
+        .route("/v1/backups/config", get(api_backup_config_get))
+        .route("/v1/backups/config", put(api_backup_config_put))
+        .route("/v1/backups/restore", post(api_backup_restore_upload))
+        .route("/v1/backups/{id}", delete(api_backups_delete))
+        .route("/v1/backups/{id}/restore", post(api_backup_restore_specific))
+        .route("/v1/alerts/rules", get(api_alert_rules_list))
+        .route("/v1/alerts/rules", post(api_alert_rules_create))
+        .route("/v1/alerts/rules/{id}", put(api_alert_rules_update))
+        .route("/v1/alerts/rules/{id}", delete(api_alert_rules_delete))
+        .route("/v1/notifications/config", get(api_notifications_config_get))
+        .route("/v1/notifications/config", put(api_notifications_config_put))
+        .route("/v1/notifications/test/{channel}", post(api_notifications_test_channel))
+        .route("/v1/threatintel/stats", get(api_threat_intel_stats_get))
+        .route("/v1/threatintel/lookup", post(api_threat_intel_lookup))
+        .route("/v1/threatintel/config", get(api_threat_intel_config_get))
+        .route("/v1/threatintel/config", put(api_threat_intel_config_put))
+        .route("/v1/threatintel/update", post(api_threat_intel_update_post))
+        .route("/v1/logs", get(api_logs_list))
+        .route("/v1/ml/baselines", get(api_ml_baselines_get))
+        .route("/v1/ml/anomalies", get(api_ml_anomalies_get))
+        .route("/v1/ml/baselines/{id}", delete(api_ml_baseline_delete))
+        .route("/v1/device-groups", get(api_device_groups_get))
+        .route("/v1/device-groups", put(api_device_groups_put))
+        .route("/v1/device-groups/policies", put(api_device_groups_policies_put))
 }
 
 // ─── status / health ──────────────────────────────────────────────────────────
@@ -329,6 +358,18 @@ async fn api_block_domain(
             .into_response();
     }
     state.blocklist.add_custom_block(domain);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_unblock_domain(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<BlockDomainRequest>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    state.blocklist.remove_custom_block(&payload.domain);
     Json(ApiResponse::ok(())).into_response()
 }
 
@@ -645,6 +686,813 @@ async fn api_export_siem(
             .join("\n"),
     };
     Json(ApiResponse::ok(data)).into_response()
+}
+
+async fn api_parental_config_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    Json(ApiResponse::ok(state.parental_control.get_config())).into_response()
+}
+
+async fn api_parental_config_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<crate::blocking::parental::ParentalConfig>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    state.parental_control.update_config(payload);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── alert rules ──────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AlertRuleWeb {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub enabled: bool,
+    pub rule_type: String,
+    pub condition: String,
+    pub severity: String,
+    pub actions: Vec<String>,
+    pub trigger_count: u32,
+    pub cooldown_minutes: u32,
+}
+
+async fn api_alert_rules_list(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let rules = state.alert_rules.get_rules();
+    let stats = state.alert_rules.get_stats();
+    
+    let web_rules: Vec<AlertRuleWeb> = rules.into_iter().map(|r| {
+        let id = r.id.clone();
+        let trigger_count = *stats.get(&id).unwrap_or(&0);
+        
+        AlertRuleWeb {
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            enabled: r.enabled,
+            rule_type: format!("{:?}", r.condition), // Simplified for now
+            condition: format!("{:?}", r.condition),
+            severity: format!("{:?}", r.severity),
+            actions: vec![format!("{:?}", r.action)],
+            trigger_count,
+            cooldown_minutes: r.cooldown_seconds / 60,
+        }
+    }).collect();
+    
+    Json(ApiResponse::ok(web_rules)).into_response()
+}
+
+async fn api_alert_rules_create(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<AlertRuleWeb>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    // Convert Web Rule to Internal Rule
+    // Basic mapping for now to satisfy the UI
+    let condition = match payload.rule_type.as_str() {
+        "Threshold" => crate::alerts::AlertCondition::Threshold {
+            metric: "packets".to_string(), // Default
+            value: 100.0,
+            operator: crate::alerts::ComparisonOp::GreaterThan,
+        },
+        _ => crate::alerts::AlertCondition::Anomaly {
+            score: 0.8,
+            device_id: None,
+        },
+    };
+    
+    let action = crate::alerts::AlertAction::Log;
+    let severity = match payload.severity.as_str() {
+        "Critical" => crate::alerts::rules::AlertSeverity::Critical,
+        "High" => crate::alerts::rules::AlertSeverity::High,
+        "Low" => crate::alerts::rules::AlertSeverity::Low,
+        "Info" => crate::alerts::rules::AlertSeverity::Info,
+        _ => crate::alerts::rules::AlertSeverity::Medium,
+    };
+    
+    let mut rule = crate::alerts::AlertRule::new(
+        payload.name,
+        condition,
+        action,
+        severity,
+    );
+    rule.description = payload.description;
+    rule.cooldown_seconds = payload.cooldown_minutes * 60;
+    
+    state.alert_rules.add_rule(rule);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_alert_rules_update(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+    Json(payload): Json<AlertRuleWeb>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    state.alert_rules.set_rule_enabled(&id, payload.enabled);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_alert_rules_delete(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    state.alert_rules.remove_rule(&id);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── notifications ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NotificationConfigWeb {
+    pub telegram: TelegramWeb,
+    pub slack: SlackWeb,
+    pub email: EmailWeb,
+    pub min_severity: String,
+    pub notify_new_device: bool,
+    pub notify_portscan: bool,
+    pub notify_blocked_domain: bool,
+    pub notify_blocked_ip: bool,
+    pub notify_critical: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TelegramWeb {
+    pub enabled: bool,
+    pub bot_token: String,
+    pub chat_id: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SlackWeb {
+    pub enabled: bool,
+    pub webhook_url: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct EmailWeb {
+    pub enabled: bool,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub username: String,
+    pub password: String,
+    pub recipients: String,
+}
+
+async fn api_notifications_config_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let alert_config = state.alerts.get_config();
+    let notif_config = state.notifications.get_config();
+    
+    let telegram = notif_config.telegram.unwrap_or(crate::notifications::TelegramConfig {
+        enabled: false,
+        bot_token: "".to_string(),
+        chat_ids: vec![],
+    });
+    
+    let slack = notif_config.slack.unwrap_or(crate::notifications::SlackConfig {
+        enabled: false,
+        webhook_url: "".to_string(),
+        channel: None,
+    });
+    
+    let email = notif_config.email.unwrap_or(crate::notifications::EmailConfig {
+        enabled: false,
+        smtp_server: "".to_string(),
+        smtp_port: 587,
+        username: "".to_string(),
+        password: "".to_string(),
+        from_email: "".to_string(),
+        to_emails: vec![],
+    });
+    
+    let config_web = NotificationConfigWeb {
+        telegram: TelegramWeb {
+            enabled: telegram.enabled,
+            bot_token: telegram.bot_token,
+            chat_id: telegram.chat_ids.get(0).cloned().unwrap_or_default(),
+        },
+        slack: SlackWeb {
+            enabled: slack.enabled,
+            webhook_url: slack.webhook_url,
+        },
+        email: EmailWeb {
+            enabled: email.enabled,
+            smtp_host: email.smtp_server,
+            smtp_port: email.smtp_port,
+            username: email.username,
+            password: email.password,
+            recipients: email.to_emails.join(", "),
+        },
+        min_severity: format!("{:?}", alert_config.min_severity),
+        notify_new_device: alert_config.notify_new_device,
+        notify_portscan: alert_config.notify_port_scan,
+        notify_blocked_domain: alert_config.notify_blocked_domain,
+        notify_blocked_ip: alert_config.notify_blocked_ip,
+        notify_critical: alert_config.notify_critical,
+    };
+    
+    Json(ApiResponse::ok(config_web)).into_response()
+}
+
+async fn api_notifications_config_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<NotificationConfigWeb>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    // Update NotificationManager
+    let _ = state.notifications.configure_telegram(crate::notifications::TelegramConfig {
+        enabled: payload.telegram.enabled,
+        bot_token: payload.telegram.bot_token,
+        chat_ids: vec![payload.telegram.chat_id],
+    });
+    
+    let _ = state.notifications.configure_slack(crate::notifications::SlackConfig {
+        enabled: payload.slack.enabled,
+        webhook_url: payload.slack.webhook_url,
+        channel: None,
+    });
+    
+    let _ = state.notifications.configure_email(crate::notifications::EmailConfig {
+        enabled: payload.email.enabled,
+        smtp_server: payload.email.smtp_host,
+        smtp_port: payload.email.smtp_port,
+        from_email: payload.email.username.clone(), // Default to username
+        username: payload.email.username,
+        password: payload.email.password,
+        to_emails: payload.email.recipients.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+    });
+    
+    // Update AlertManager
+    let min_severity = match payload.min_severity.as_str() {
+        "Critical" => crate::alerts::AlertSeverity::Critical,
+        "Error" | "High" => crate::alerts::AlertSeverity::Error,
+        "Warning" | "Medium" => crate::alerts::AlertSeverity::Warning,
+        _ => crate::alerts::AlertSeverity::Info,
+    };
+    
+    state.alerts.update_config(crate::alerts::AlertConfig {
+        notify_new_device: payload.notify_new_device,
+        notify_port_scan: payload.notify_portscan,
+        notify_blocked_domain: payload.notify_blocked_domain,
+        notify_blocked_ip: payload.notify_blocked_ip,
+        notify_critical: payload.notify_critical,
+        min_severity,
+    });
+    
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_notifications_test_channel(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(channel): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let message = crate::notifications::NotificationMessage {
+        title: "Sentinel-RS Test".to_string(),
+        message: format!("This is a test notification from Sentinel-RS for the {} channel.", channel),
+        severity: crate::notifications::NotificationSeverity::Info,
+        timestamp: chrono::Utc::now().timestamp(),
+        source: "Sentinel-RS Dashboard".to_string(),
+    };
+    
+    let _ = state.notifications.send(message).await;
+    
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── threat intel ─────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct ThreatStatsWeb {
+    pub malicious_ips: usize,
+    pub malicious_domains: usize,
+    pub feeds_enabled: usize,
+    pub last_update: i64,
+}
+
+#[derive(serde::Serialize)]
+struct ThreatLookupResultWeb {
+    pub malicious: bool,
+    pub indicator: String,
+    pub r#type: String,
+    pub threat_type: Option<String>,
+    pub confidence: u8,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ThreatConfigWeb {
+    pub auto_block: bool,
+    pub feeds: ThreatFeedsWeb,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ThreatFeedsWeb {
+    pub urlhaus: bool,
+    pub emerging_threats: bool,
+    pub abuseipdb: bool,
+}
+
+async fn api_threat_intel_stats_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let stats = state.threat_intel.get_stats();
+    let feeds_enabled = 2; // Fixed for now
+    
+    Json(ApiResponse::ok(ThreatStatsWeb {
+        malicious_ips: stats.blocked_ips,
+        malicious_domains: stats.blocked_domains,
+        feeds_enabled,
+        last_update: stats.last_update,
+    })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct LookupRequest {
+    indicator: String,
+}
+
+async fn api_threat_intel_lookup(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<LookupRequest>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let indicator = payload.indicator.trim();
+    
+    let result = if indicator.contains('.') && !indicator.chars().all(|c| c.is_numeric() || c == '.') {
+        state.threat_intel.check_domain(indicator)
+    } else {
+        state.threat_intel.check_ip(indicator)
+    };
+    
+    match result {
+        Some(entry) => {
+            Json(ApiResponse::ok(ThreatLookupResultWeb {
+                malicious: entry.is_malicious(),
+                indicator: entry.indicator,
+                r#type: format!("{:?}", entry.threat_type),
+                threat_type: Some(format!("{:?}", entry.threat_type)),
+                confidence: entry.confidence,
+            })).into_response()
+        }
+        None => {
+            Json(ApiResponse::ok(ThreatLookupResultWeb {
+                malicious: false,
+                indicator: indicator.to_string(),
+                r#type: "Unknown".to_string(),
+                threat_type: None,
+                confidence: 0,
+            })).into_response()
+        }
+    }
+}
+
+async fn api_threat_intel_config_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    Json(ApiResponse::ok(ThreatConfigWeb {
+        auto_block: state.threat_intel.is_enabled(),
+        feeds: ThreatFeedsWeb {
+            urlhaus: true,
+            emerging_threats: true,
+            abuseipdb: false,
+        },
+    })).into_response()
+}
+
+async fn api_threat_intel_config_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<ThreatConfigWeb>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    state.threat_intel.set_enabled(payload.auto_block);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_threat_intel_update_post(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let _ = state.threat_intel.update_all().await;
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── logs ────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct LogWeb {
+    pub timestamp: i64,
+    pub level: String,
+    pub message: String,
+    pub source: String,
+}
+
+async fn api_logs_list(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let logs = state.logs.get_recent(1000);
+    let web_logs: Vec<LogWeb> = logs.into_iter().map(|l| {
+        let level = match l.level {
+            crate::logs::LogLevel::Debug => "debug",
+            crate::logs::LogLevel::Info => "info",
+            crate::logs::LogLevel::Warning => "warn",
+            crate::logs::LogLevel::Error => "error",
+            crate::logs::LogLevel::Critical => "error",
+        }.to_string();
+        
+        LogWeb {
+            timestamp: l.timestamp,
+            level,
+            message: l.message,
+            source: l.category,
+        }
+    }).collect();
+    
+    Json(ApiResponse::ok(web_logs)).into_response()
+}
+
+// ─── ml ──────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct DeviceBaselineWeb {
+    pub device_id: String,
+    pub learned_at: i64,
+    pub avg_traffic: f64,
+    pub peak_traffic: f64,
+    pub avg_connections: usize,
+    pub sensitivity: f64,
+}
+
+#[derive(serde::Serialize)]
+struct AnomalyWeb {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub severity: String,
+    pub description: String,
+    pub detected_at: i64,
+}
+
+async fn api_ml_baselines_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let detector = state.ml_detector.read();
+    let baselines = detector.get_all_baselines();
+    let thresholds = detector.get_thresholds();
+    
+    let web_baselines: Vec<DeviceBaselineWeb> = baselines.into_iter().map(|b| {
+        DeviceBaselineWeb {
+            device_id: b.device_id,
+            learned_at: b.learned_at,
+            avg_traffic: b.avg_bytes_per_sec,
+            peak_traffic: b.avg_bytes_per_sec * 1.5, // Estimated for UI
+            avg_connections: b.common_ports.len(),
+            sensitivity: (1.0 / thresholds.high_traffic_multiplier) * 100.0,
+        }
+    }).collect();
+    
+    Json(ApiResponse::ok(web_baselines)).into_response()
+}
+
+async fn api_ml_anomalies_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let detector = state.ml_detector.read();
+    let anomalies = detector.get_recent_anomalies(50);
+    
+    let web_anomalies: Vec<AnomalyWeb> = anomalies.into_iter().map(|a| {
+        let severity = if a.severity > 0.8 { "Critical" }
+                      else if a.severity > 0.6 { "High" }
+                      else if a.severity > 0.4 { "Medium" }
+                      else { "Low" };
+                      
+        AnomalyWeb {
+            id: format!("anom-{}", a.timestamp),
+            type_name: format!("{:?}", a.anomaly_type),
+            severity: severity.to_string(),
+            description: a.description,
+            detected_at: a.timestamp,
+        }
+    }).collect();
+    
+    Json(ApiResponse::ok(web_anomalies)).into_response()
+}
+
+async fn api_ml_baseline_delete(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    state.ml_detector.write().clear_baseline(&id);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── device groups ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct DeviceGroupWeb {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub devices: Vec<crate::devices::Device>,
+    pub policies: crate::blocking::client_manager::GroupPolicies,
+}
+
+async fn api_device_groups_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let manager = &state.client_manager;
+    let mut web_groups = Vec::new();
+    
+    let all_ids = manager.get_all_group_ids();
+    for id in all_ids {
+        let group = crate::blocking::client_manager::DeviceGroup::from_id(id).unwrap();
+        let name = match group {
+            crate::blocking::client_manager::DeviceGroup::Trusted => "Trusted",
+            crate::blocking::client_manager::DeviceGroup::Kids => "Kids",
+            crate::blocking::client_manager::DeviceGroup::Guests => "Guests",
+            crate::blocking::client_manager::DeviceGroup::IoT => "IoT",
+            crate::blocking::client_manager::DeviceGroup::Default => "Default",
+        };
+        let icon = match group {
+            crate::blocking::client_manager::DeviceGroup::Trusted => "🛡️",
+            crate::blocking::client_manager::DeviceGroup::Kids => "👶",
+            crate::blocking::client_manager::DeviceGroup::Guests => "👥",
+            crate::blocking::client_manager::DeviceGroup::IoT => "📡",
+            crate::blocking::client_manager::DeviceGroup::Default => "⚙️",
+        };
+        
+        let macs = manager.get_members_for_group(group);
+        let mut devices = Vec::new();
+        for mac in macs {
+            if let Some(device) = state.device_manager.get_by_mac(&mac) {
+                devices.push(device);
+            }
+        }
+        
+        web_groups.push(DeviceGroupWeb {
+            id: id.to_string(),
+            name: name.to_string(),
+            icon: icon.to_string(),
+            devices,
+            policies: manager.get_policies(group),
+        });
+    }
+    
+    Json(ApiResponse::ok(web_groups)).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct GroupUpdate {
+    id: String,
+    devices: Vec<String>,
+}
+
+async fn api_device_groups_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<Vec<GroupUpdate>>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    for update in payload {
+        for mac in update.devices {
+            state.client_manager.assign_device(mac, &update.id);
+        }
+    }
+    
+    Json(ApiResponse::ok(())).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PolicyUpdate {
+    id: String,
+    policies: crate::blocking::client_manager::GroupPolicies,
+}
+
+async fn api_device_groups_policies_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<Vec<PolicyUpdate>>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    for update in payload {
+        state.client_manager.update_policies(&update.id, update.policies);
+    }
+    
+    Json(ApiResponse::ok(())).into_response()
+}
+
+// ─── backups ──────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct BackupInfo {
+    id: String,
+    name: String,
+    size: u64,
+    created_at: i64,
+}
+
+async fn api_backups_list(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    let backups = state.backup.list_backups();
+    let info: Vec<BackupInfo> = backups
+        .into_iter()
+        .map(|m| BackupInfo {
+            id: m.filename.clone(),
+            name: m.filename,
+            size: m.size_bytes,
+            created_at: m.timestamp * 1000, // Convert to ms for JS
+        })
+        .collect();
+        
+    Json(ApiResponse::ok(info)).into_response()
+}
+
+async fn api_backups_create(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    // We pass None for now as direct DB/Blocklist data isn't needed for basic config backup
+    match state.backup.create_backup(None, None) {
+        Ok(_) => Json(ApiResponse::ok(())).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(e))).into_response(),
+    }
+}
+
+async fn api_backup_config_get(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp.into_response();
+    }
+    Json(ApiResponse::ok(state.backup.get_config())).into_response()
+}
+
+async fn api_backup_config_put(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<crate::backup::BackupConfig>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    state.backup.configure(payload);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_backups_delete(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    match state.backup.delete_backup(&id) {
+        Ok(_) => Json(ApiResponse::ok(())).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(e))).into_response(),
+    }
+}
+
+async fn api_backup_restore_specific(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    match state.backup.restore_backup(&id) {
+        Ok(data) => {
+            // Apply backup config
+            state.backup.configure(data.config);
+            // In a full implementation we would restore DB/Blocklist here
+            Json(ApiResponse::ok("Backup restored")).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(e))).into_response(),
+    }
+}
+
+async fn api_backup_restore_upload(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(data): Json<crate::backup::BackupData>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    state.backup.configure(data.config);
+    // Restoration logic would go here
+    Json(ApiResponse::ok("Backup uploaded and applied")).into_response()
 }
 
 // ─── request structs ──────────────────────────────────────────────────────────

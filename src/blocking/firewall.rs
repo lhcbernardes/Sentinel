@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::blocking::blocklist::Blocklist;
+use bloomfilter::Bloom;
 
 fn validate_ip(ip: &str) -> Result<String, String> {
     let ip = ip.trim();
@@ -38,6 +39,7 @@ pub struct FirewallManager {
     backend: RwLock<FirewallBackend>,
     cmd_tx: Sender<FirewallCommand>,
     shutdown: Arc<AtomicBool>,
+    bloom_filter: RwLock<Bloom<String>>,
 }
 
 impl FirewallManager {
@@ -69,6 +71,7 @@ impl FirewallManager {
             backend: RwLock::new(backend),
             cmd_tx,
             shutdown,
+            bloom_filter: RwLock::new(Bloom::new_for_fp_rate(100000, 0.01)),
         }
     }
 
@@ -229,6 +232,9 @@ impl FirewallManager {
                 return Ok(());
             }
             blocked.insert(validated_ip.clone());
+            
+            // Update bloom filter
+            self.bloom_filter.write().set(&validated_ip);
         }
 
         let _ = self
@@ -236,6 +242,16 @@ impl FirewallManager {
             .try_send(FirewallCommand::Block { ip: validated_ip });
 
         Ok(())
+    }
+    
+    pub fn is_ip_blocked(&self, ip: &str) -> bool {
+        // Fast check using bloom filter
+        if !self.bloom_filter.read().check(&ip.to_string()) {
+            return false;
+        }
+        
+        // Potential positive, confirm with HashSet
+        self.blocked_ips.read().contains(ip)
     }
 
     pub fn unblock_ip(&self, ip: &str) -> Result<(), String> {

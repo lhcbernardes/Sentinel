@@ -144,7 +144,12 @@ function parentalManager() {
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
-                    this.config = { ...this.config, ...data.data };
+                    // Map backend names to frontend names
+                    this.config.enabled = data.data.enabled;
+                    this.config.block_adult = data.data.block_adult_domains;
+                    this.config.safe_search = data.data.safe_search_engines;
+                    this.config.blocked_categories = data.data.blocked_categories || [];
+                    
                     this.updateStats();
                 }
             } catch (error) {
@@ -156,8 +161,8 @@ function parentalManager() {
             try {
                 const response = await fetch('/api/v1/dns/queries?blocked=true');
                 const data = await response.json();
-                if (data.success && data.data) {
-                    this.blockedDomains = [...new Set(data.data.map(q => q.domain))].slice(0, 50);
+                if (data.success && data.data && data.data.queries) {
+                    this.blockedDomains = [...new Set(data.data.queries.map(q => q.domain))].slice(0, 50);
                 }
             } catch (error) {
                 console.error('Failed to load blocked domains:', error);
@@ -166,13 +171,20 @@ function parentalManager() {
 
         async saveConfig() {
             try {
+                // Map frontend names back to backend names
+                const payload = {
+                    enabled: this.config.enabled,
+                    block_adult_domains: this.config.block_adult,
+                    safe_search_engines: this.config.safe_search,
+                    blocked_categories: this.config.blocked_categories || []
+                };
+
                 await fetch('/api/v1/parental/config', {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        
                     },
-                    body: JSON.stringify(this.config)
+                    body: JSON.stringify(payload)
                 });
                 this.updateStats();
             } catch (error) {

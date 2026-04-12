@@ -375,6 +375,11 @@ impl Blocklist {
         sets.custom.insert(entry);
     }
 
+    pub fn remove_custom_block(&self, entry: &str) {
+        let mut sets = self.sets.write();
+        sets.custom.remove(entry);
+    }
+
     pub fn add_attacker(&self, entry: String) {
         let mut sets = self.sets.write();
         sets.attackers.insert(entry);

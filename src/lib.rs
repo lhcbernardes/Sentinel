@@ -67,6 +67,13 @@ pub struct AppState {
     pub netflow_collector: Arc<RwLock<VecDeque<NetFlowRecord>>>,
     pub dpi_engine: Arc<DpiEngine>,
     pub metrics: Arc<MetricsExporter>,
+    pub template_cache: Arc<crate::web::routes::TemplateCache>,
+    pub parental_control: Arc<crate::blocking::ParentalControl>,
+    pub alert_rules: Arc<crate::alerts::AlertRuleEngine>,
+    pub notifications: Arc<crate::notifications::NotificationManager>,
+    pub threat_intel: Arc<crate::threatintel::ThreatIntelligence>,
+    pub ml_detector: Arc<RwLock<crate::anomaly::MlDetector>>,
+    pub client_manager: Arc<crate::blocking::ClientManager>,
 }
 
 impl AppState {
@@ -103,6 +110,13 @@ impl AppState {
             netflow_collector: Arc::new(RwLock::new(VecDeque::new())),
             dpi_engine: Arc::new(DpiEngine::new()),
             metrics: Arc::new(MetricsExporter::new()),
+            template_cache: Arc::new(crate::web::routes::TemplateCache::new(3600)),
+            parental_control: Arc::new(crate::blocking::ParentalControl::new()),
+            alert_rules: Arc::new(crate::alerts::AlertRuleEngine::new()),
+            notifications: Arc::new(crate::notifications::NotificationManager::new()),
+            threat_intel: Arc::new(crate::threatintel::ThreatIntelligence::new()),
+            ml_detector: Arc::new(RwLock::new(crate::anomaly::MlDetector::new())),
+            client_manager: Arc::new(crate::blocking::ClientManager::new()),
         }
     }
 

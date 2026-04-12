@@ -21,15 +21,17 @@ impl Database {
         // NORMAL sync for better write throughput with reasonable safety,
         // busy_timeout to retry on lock contention instead of failing immediately.
         // mmap_size for memory-mapped I/O, page_size optimization.
+        // Performance pragmas optimized for high throughput
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
+            "PRAGMA journal_mode = MEMORY;
+             PRAGMA synchronous = OFF;
              PRAGMA busy_timeout = 5000;
-             PRAGMA cache_size = -16000;
+             PRAGMA cache_size = -64000;
              PRAGMA foreign_keys = ON;
-             PRAGMA mmap_size = 268435456;
+             PRAGMA mmap_size = 536870912;
              PRAGMA temp_store = MEMORY;
-             PRAGMA page_size = 4096;",
+             PRAGMA page_size = 4096;
+             PRAGMA auto_vacuum = INCREMENTAL;",
         )
         .map_err(|e| format!("Failed to set database pragmas: {}", e))?;
 
@@ -430,12 +432,23 @@ impl Database {
 
         let db_size_bytes = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
 
+        // Run incremental vacuum if needed
+        if db_size_bytes > 1024 * 1024 * 100 { // 100MB
+             let _ = conn.execute("PRAGMA incremental_vacuum(100)", []);
+        }
+
         DbStats {
             device_count: device_count as usize,
             alert_count: alert_count as usize,
             packet_count: packet_count as usize,
             db_size_bytes,
         }
+    }
+
+    pub fn compact(&self) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute("VACUUM", []).map_err(|e| format!("Failed to vacuum: {}", e))?;
+        Ok(())
     }
 }
 

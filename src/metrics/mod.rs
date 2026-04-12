@@ -28,11 +28,19 @@ impl MetricsExporter {
     }
 
     pub fn increment_packets(&self) {
-        self.packets_total.fetch_add(1, Ordering::Relaxed);
+        // Sample 1 out of 10 packets for high performance metrics
+        let mut rng = rand::thread_rng();
+        if rand::Rng::gen_range(&mut rng, 0..10) == 0 {
+            self.packets_total.fetch_add(10, Ordering::Relaxed);
+        }
     }
 
     pub fn add_bytes(&self, bytes: u64) {
-        self.bytes_total.fetch_add(bytes, Ordering::Relaxed);
+        // Sample similar to packets
+        let mut rng = rand::thread_rng();
+        if rand::Rng::gen_range(&mut rng, 0..10) == 0 {
+            self.bytes_total.fetch_add(bytes * 10, Ordering::Relaxed);
+        }
     }
 
     pub fn increment_alerts(&self) {

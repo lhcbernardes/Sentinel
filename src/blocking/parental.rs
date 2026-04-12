@@ -191,6 +191,10 @@ impl ParentalControl {
         self.config.write().safe_search_engines = enabled;
     }
 
+    pub fn update_config(&self, new_config: ParentalConfig) {
+        *self.config.write() = new_config;
+    }
+
     pub fn get_config(&self) -> ParentalConfig {
         self.config.read().clone()
     }

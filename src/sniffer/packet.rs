@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::net::IpAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,8 +11,8 @@ pub struct PacketInfo {
     pub dst_port: Option<u16>,
     pub protocol: Protocol,
     pub size: u32,
-    pub src_mac: Option<String>,
-    pub dst_mac: Option<String>,
+    pub src_mac: Option<Cow<'static, str>>,
+    pub dst_mac: Option<Cow<'static, str>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,6 +48,7 @@ impl From<u8> for Protocol {
 #[cfg(test)]
 mod tests {
     use super::{PacketInfo, Protocol};
+    use std::borrow::Cow;
     use std::net::IpAddr;
 
     #[test]
@@ -59,8 +61,8 @@ mod tests {
             dst_port: Some(80),
             protocol: Protocol::Tcp,
             size: 1500,
-            src_mac: Some("00:11:22:33:44:55".to_string()),
-            dst_mac: Some("aa:bb:cc:dd:ee:ff".to_string()),
+            src_mac: Some(Cow::Borrowed("00:11:22:33:44:55")),
+            dst_mac: Some(Cow::Borrowed("aa:bb:cc:dd:ee:ff")),
         };
 
         assert_eq!(packet.protocol, Protocol::Tcp);

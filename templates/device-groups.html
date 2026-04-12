@@ -43,8 +43,10 @@
                     <div class="flex gap-2">
                         <select x-model="group.newDevice" class="flex-1 bg-gray-900/60 text-white px-3 py-2 rounded-lg border border-gray-700/50 text-sm">
                             <option value="">Select device...</option>
-                            <template x-for="device in availableDevices" :key="device.mac">
-                                <option :value="device.mac" x-text="device.ip || device.mac.substring(0,8)"></option>
+                            <template x-if="availableDevices && availableDevices.length > 0">
+                                <template x-for="device in availableDevices" :key="device.mac">
+                                    <option :value="device.mac" x-text="device.ip || device.mac.substring(0,8)"></option>
+                                </template>
                             </template>
                         </select>
                         <button @click="addDevice(group.id)" class="bg-cyber-primary/80 hover:bg-cyber-primary text-white px-3 py-2 rounded-lg transition-all text-sm">
@@ -152,8 +154,9 @@ function deviceGroupsManager() {
         },
 
         get availableDevices() {
-            const assigned = this.groups.flatMap(g => g.devices.map(d => d.mac));
-            return this.allDevices.filter(d => !assigned.includes(d.mac));
+            if (!this.allDevices || !Array.isArray(this.allDevices)) return [];
+            const assigned = this.groups.flatMap(g => (g.devices || []).map(d => d.mac));
+            return this.allDevices.filter(d => d && d.mac && !assigned.includes(d.mac));
         },
 
         async addDevice(groupId) {

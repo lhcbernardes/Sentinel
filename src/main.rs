@@ -201,6 +201,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
+        // Start periodic template cache cleanup
+        let cache_for_cleanup = app_state.template_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(600)); // every 10 min
+            loop {
+                interval.tick().await;
+                cache_for_cleanup.cleanup();
+                tracing::debug!("Cleaned up expired template cache entries");
+            }
+        });
+
         // Start periodic database cleanup task
         let db_for_cleanup = database.clone();
         tokio::spawn(async move {

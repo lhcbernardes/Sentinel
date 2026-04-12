@@ -108,7 +108,7 @@ impl PooledPacketInfo {
         };
 
         let src_mac = if self.inner.has_src_mac {
-            Some(format!(
+            Some(std::borrow::Cow::Owned(format!(
                 "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                 self.inner.src_mac[0],
                 self.inner.src_mac[1],
@@ -116,13 +116,13 @@ impl PooledPacketInfo {
                 self.inner.src_mac[3],
                 self.inner.src_mac[4],
                 self.inner.src_mac[5]
-            ))
+            )))
         } else {
             None
         };
 
         let dst_mac = if self.inner.has_dst_mac {
-            Some(format!(
+            Some(std::borrow::Cow::Owned(format!(
                 "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
                 self.inner.dst_mac[0],
                 self.inner.dst_mac[1],
@@ -130,7 +130,7 @@ impl PooledPacketInfo {
                 self.inner.dst_mac[3],
                 self.inner.dst_mac[4],
                 self.inner.dst_mac[5]
-            ))
+            )))
         } else {
             None
         };

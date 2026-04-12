@@ -13,21 +13,25 @@ pub struct TrafficSample {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceBaseline {
+    pub device_id: String,
     pub avg_bytes_per_sec: f64,
     pub avg_packets_per_sec: f64,
     pub common_ports: Vec<u16>,
     pub common_protocols: Vec<String>,
     pub stddev_bytes: f64,
+    pub learned_at: i64,
 }
 
 impl Default for DeviceBaseline {
     fn default() -> Self {
         Self {
+            device_id: String::new(),
             avg_bytes_per_sec: 0.0,
             avg_packets_per_sec: 0.0,
             common_ports: Vec::new(),
             common_protocols: Vec::new(),
             stddev_bytes: 0.0,
+            learned_at: chrono::Utc::now().timestamp_millis(),
         }
     }
 }
@@ -200,11 +204,13 @@ impl MlDetector {
         self.baselines.insert(
             device_id.to_string(),
             DeviceBaseline {
+                device_id: device_id.to_string(),
                 avg_bytes_per_sec: avg_bytes / 60.0,
                 avg_packets_per_sec: total_packets as f64 / samples.len() as f64 / 60.0,
                 common_ports,
                 common_protocols: vec![],
                 stddev_bytes: variance.sqrt(),
+                learned_at: chrono::Utc::now().timestamp_millis(),
             },
         );
     }
@@ -232,6 +238,10 @@ impl MlDetector {
 
     pub fn clear_baseline(&mut self, device_id: &str) {
         self.baselines.remove(device_id);
+    }
+
+    pub fn get_all_baselines(&self) -> Vec<DeviceBaseline> {
+        self.baselines.values().cloned().collect()
     }
 }
 

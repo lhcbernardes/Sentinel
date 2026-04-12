@@ -25,6 +25,21 @@ pub enum AlertCondition {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AlertSeverity {
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl Default for AlertSeverity {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ComparisonOp {
     GreaterThan,
@@ -81,12 +96,13 @@ pub struct AlertRule {
     pub enabled: bool,
     pub condition: AlertCondition,
     pub action: AlertAction,
+    pub severity: AlertSeverity,
     pub cooldown_seconds: u32,
     pub last_triggered: Option<i64>,
 }
 
 impl AlertRule {
-    pub fn new(name: String, condition: AlertCondition, action: AlertAction) -> Self {
+    pub fn new(name: String, condition: AlertCondition, action: AlertAction, severity: AlertSeverity) -> Self {
         Self {
             id: format!("rule-{}", chrono::Utc::now().timestamp_millis()),
             name,
@@ -94,6 +110,7 @@ impl AlertRule {
             enabled: true,
             condition,
             action,
+            severity,
             cooldown_seconds: 300,
             last_triggered: None,
         }
