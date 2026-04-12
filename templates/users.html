@@ -237,8 +237,13 @@ function userManagement() {
             try {
                 const res = await fetch('/api/v1/users');
                 if (!res.ok) throw new Error('Failed to load users');
-                this.users = await res.json();
-                this.updateStats();
+                const data = await res.json();
+                if (data.success && Array.isArray(data.data)) {
+                    this.users = data.data;
+                    this.updateStats();
+                } else {
+                    throw new Error(data.error || 'Failed to load users');
+                }
             } catch (err) {
                 this.showNotification('Error loading users: ' + err.message, 'error');
             }
@@ -288,8 +293,8 @@ function userManagement() {
                     body: JSON.stringify(this.createForm)
                 });
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.message || 'Failed to create user');
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || err.message || 'Failed to create user');
                 }
                 this.showCreateModal = false;
                 await this.loadUsers();
@@ -346,8 +351,8 @@ function userManagement() {
                     method: 'DELETE'
                 });
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.message || 'Failed to delete user');
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || err.message || 'Failed to delete user');
                 }
                 this.showDeleteModal = false;
                 await this.loadUsers();

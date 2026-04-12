@@ -23,12 +23,24 @@ services:
       # SENTINEL_ADMIN_PASSWORD: senha do usuário admin padrão
       - SENTINEL_JWT_SECRET=${SENTINEL_JWT_SECRET:?Defina SENTINEL_JWT_SECRET com no mínimo 32 caracteres}
       - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD:-Sentinel@2024}
+      - GEOIP_DB_PATH=/app/data/GeoLite2-Country.mmdb
     volumes:
       - sentinel-data:/app/data
       - sentinel-logs:/app/logs
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    # Impede que o processo ganhe novos privilégios (Security Best Practice)
+    security_opt:
+      - no-new-privileges:true
+    # Para capturar tráfego da rede física (não apenas do bridge do Docker),
+    # pode ser necessário usar 'network_mode: host' em vez de ports/networks.
+    # network_mode: host
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]

@@ -1,10 +1,13 @@
+use crate::anomaly::bruteforce::{BruteForceAlert, BruteForceDetector};
 use crate::anomaly::portscan::{PortScanAlert, PortScanDetector};
+use crate::blocking::geoip::GeoIPService;
 use crate::sniffer::packet::{PacketInfo, Protocol};
 use chrono::Utc;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -25,7 +28,9 @@ pub struct Alert {
 pub enum AlertType {
     NewDevice,
     PortScan,
+    BruteForce,
     SuspiciousTraffic,
+    BlockedCountry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -62,6 +67,36 @@ impl Alert {
             severity: Severity::Warning,
         }
     }
+    
+    pub fn brute_force(alert: BruteForceAlert) -> Self {
+        Self {
+            id: format!("brute-{}", Utc::now().timestamp_millis()),
+            timestamp: Utc::now().timestamp_millis(),
+            alert_type: AlertType::BruteForce,
+            source_ip: alert.source_ip.clone(),
+            target_ip: None,
+            message: format!(
+                "Brute force attempt detected from {} on port {} ({} attempts)",
+                alert.source_ip, alert.target_port, alert.attempt_count
+            ),
+            severity: Severity::Critical,
+        }
+    }
+
+    pub fn blocked_country(source_ip: String, country: String) -> Self {
+        Self {
+            id: format!("geo-{}", Utc::now().timestamp_millis()),
+            timestamp: Utc::now().timestamp_millis(),
+            alert_type: AlertType::BlockedCountry,
+            source_ip: source_ip.clone(),
+            target_ip: None,
+            message: format!(
+                "Traffic detected from blocked country {} (IP: {})",
+                country, source_ip
+            ),
+            severity: Severity::Critical,
+        }
+    }
 }
 
 impl std::fmt::Display for AlertType {
@@ -69,6 +104,8 @@ impl std::fmt::Display for AlertType {
         match self {
             AlertType::NewDevice => write!(f, "New Device"),
             AlertType::PortScan => write!(f, "Port Scan"),
+            AlertType::BruteForce => write!(f, "Brute Force"),
+            AlertType::BlockedCountry => write!(f, "Blocked Country"),
             AlertType::SuspiciousTraffic => write!(f, "Suspicious Traffic"),
         }
     }
@@ -86,19 +123,34 @@ impl std::fmt::Display for Severity {
 
 pub struct AnomalyDetector {
     port_scan_detector: RwLock<PortScanDetector>,
+    brute_force_detector: RwLock<BruteForceDetector>,
     recent_alerts: RwLock<VecDeque<Alert>>,
     alert_tx: broadcast::Sender<Alert>,
     packet_batch_size: usize,
+    geoip: RwLock<Option<Arc<GeoIPService>>>,
+    blocked_countries: RwLock<Option<Arc<RwLock<std::collections::HashSet<String>>>>>,
 }
 
 impl AnomalyDetector {
     pub fn new(alert_tx: broadcast::Sender<Alert>) -> Self {
         Self {
             port_scan_detector: RwLock::new(PortScanDetector::new()),
+            brute_force_detector: RwLock::new(BruteForceDetector::new()),
             recent_alerts: RwLock::new(VecDeque::with_capacity(MAX_ALERTS)),
             alert_tx,
             packet_batch_size: 128, // Process 128 packets at once
+            geoip: RwLock::new(None),
+            blocked_countries: RwLock::new(None),
         }
+    }
+
+    pub fn set_geoip(
+        &self,
+        geoip: Arc<GeoIPService>,
+        blocked_countries: Arc<RwLock<std::collections::HashSet<String>>>,
+    ) {
+        *self.geoip.write() = Some(geoip);
+        *self.blocked_countries.write() = Some(blocked_countries);
     }
 
     /// Create a new anomaly detector with custom batch settings
@@ -109,13 +161,29 @@ impl AnomalyDetector {
     ) -> Self {
         Self {
             port_scan_detector: RwLock::new(PortScanDetector::new()),
+            brute_force_detector: RwLock::new(BruteForceDetector::new()),
             recent_alerts: RwLock::new(VecDeque::with_capacity(MAX_ALERTS)),
             alert_tx,
             packet_batch_size,
+            geoip: RwLock::new(None),
+            blocked_countries: RwLock::new(None),
         }
     }
 
     pub fn analyze(&self, packet: &PacketInfo) {
+        // Check for blocked countries
+        if let Some(geoip) = self.geoip.read().as_ref() {
+            let ip_str = packet.src_ip.to_string();
+            if let Some(country) = geoip.lookup_country(packet.src_ip) {
+                if let Some(blocked_set) = self.blocked_countries.read().as_ref() {
+                    if blocked_set.read().contains(&country) {
+                        let alert = Alert::blocked_country(ip_str.clone(), country);
+                        self.process_alert(alert);
+                    }
+                }
+            }
+        }
+
         if packet.protocol == Protocol::Tcp {
             if let Some(dst_port) = packet.dst_port {
                 let scan_alert = {
@@ -125,18 +193,30 @@ impl AnomalyDetector {
 
                 if let Some(scan_alert) = scan_alert {
                     let alert = Alert::port_scan(scan_alert);
-                    info!("{}", alert.message);
-
-                    let mut alerts = self.recent_alerts.write();
-                    if alerts.len() >= MAX_ALERTS {
-                        alerts.pop_front();
-                    }
-                    alerts.push_back(alert.clone());
-
-                    let _ = self.alert_tx.send(alert);
+                    self.process_alert(alert);
+                }
+                
+                let bf_alert = {
+                    let detector = self.brute_force_detector.write();
+                    detector.check(&packet.src_ip.to_string(), dst_port)
+                };
+                
+                if let Some(bf_alert) = bf_alert {
+                    let alert = Alert::brute_force(bf_alert);
+                    self.process_alert(alert);
                 }
             }
         }
+    }
+    
+    fn process_alert(&self, alert: Alert) {
+        info!("{}", alert.message);
+        let mut alerts = self.recent_alerts.write();
+        if alerts.len() >= MAX_ALERTS {
+            alerts.pop_front();
+        }
+        alerts.push_back(alert.clone());
+        let _ = self.alert_tx.send(alert);
     }
 
     /// Batch analyze packets with Rayon parallelization
@@ -144,38 +224,39 @@ impl AnomalyDetector {
         let alerts: Vec<Alert> = packets
             .par_iter()
             .filter_map(|packet| {
+                // Check local copy/reference for blocked country
+                if let Some(geoip) = self.geoip.read().as_ref() {
+                    if let Some(country) = geoip.lookup_country(packet.src_ip) {
+                        if let Some(blocked_set) = self.blocked_countries.read().as_ref() {
+                            if blocked_set.read().contains(&country) {
+                                return Some(Alert::blocked_country(packet.src_ip.to_string(), country));
+                            }
+                        }
+                    }
+                }
+
                 if packet.protocol == Protocol::Tcp {
                     if let Some(dst_port) = packet.dst_port {
-                        let scan_alert = {
-                            let detector = self.port_scan_detector.read();
-                            detector.check(&packet.src_ip.to_string(), dst_port, true)
-                        };
-
+                        // Check for Port Scans
+                        let scan_alert = self.port_scan_detector.read().check(&packet.src_ip.to_string(), dst_port, true);
                         if let Some(scan_alert) = scan_alert {
-                            Some(Alert::port_scan(scan_alert))
-                        } else {
-                            None
+                            return Some(Alert::port_scan(scan_alert));
                         }
-                    } else {
-                        None
+
+                        // Check for Brute Force
+                        let bf_alert = self.brute_force_detector.read().check(&packet.src_ip.to_string(), dst_port);
+                        if let Some(bf_alert) = bf_alert {
+                            return Some(Alert::brute_force(bf_alert));
+                        }
                     }
-                } else {
-                    None
                 }
+                None
             })
             .collect();
 
         // Add alerts to recent alerts and broadcast
         for alert in &alerts {
-            info!("{}", alert.message);
-
-            let mut recent = self.recent_alerts.write();
-            if recent.len() >= MAX_ALERTS {
-                recent.pop_front();
-            }
-            recent.push_back(alert.clone());
-
-            let _ = self.alert_tx.send(alert.clone());
+            self.process_alert(alert.clone());
         }
 
         alerts
@@ -196,6 +277,7 @@ impl AnomalyDetector {
 
     pub fn cleanup(&self) {
         self.port_scan_detector.read().cleanup();
+        self.brute_force_detector.write().cleanup();
     }
 
     pub fn get_recent_alerts(&self) -> Vec<Alert> {

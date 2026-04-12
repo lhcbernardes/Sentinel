@@ -5,6 +5,7 @@ pub mod dns_over_tls;
 pub mod dns_rewrite;
 pub mod dns_sinkhole;
 pub mod firewall;
+pub mod geoip;
 pub mod parental;
 pub mod updater;
 

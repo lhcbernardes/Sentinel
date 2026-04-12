@@ -74,6 +74,7 @@ pub struct AppState {
     pub threat_intel: Arc<crate::threatintel::ThreatIntelligence>,
     pub ml_detector: Arc<RwLock<crate::anomaly::MlDetector>>,
     pub client_manager: Arc<crate::blocking::ClientManager>,
+    pub dns_rewrite: Arc<crate::blocking::DnsRewriteManager>,
 }
 
 impl AppState {
@@ -84,6 +85,7 @@ impl AppState {
         blocklist: Arc<crate::blocking::Blocklist>,
         dns_sinkhole: Arc<crate::blocking::DnsSinkhole>,
         firewall: Arc<crate::blocking::FirewallManager>,
+        dns_rewrite: Arc<crate::blocking::DnsRewriteManager>,
     ) -> Self {
         let (packet_tx, _) = broadcast::channel(10000);
         let (alert_tx, _) = broadcast::channel(1000);
@@ -117,6 +119,7 @@ impl AppState {
             threat_intel: Arc::new(crate::threatintel::ThreatIntelligence::new()),
             ml_detector: Arc::new(RwLock::new(crate::anomaly::MlDetector::new())),
             client_manager: Arc::new(crate::blocking::ClientManager::new()),
+            dns_rewrite,
         }
     }
 

@@ -1,30 +1,14 @@
-use std::borrow::Cow;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::anomaly::AnomalyDetector;
 use crate::db::Database;
 use crate::devices::DeviceManager;
-use crate::sniffer::packet::{PacketInfo, Protocol};
-use bytes::BytesMut;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crate::sniffer::packet::PacketInfo;
 use tokio::sync::broadcast;
 use crate::sniffer::pool::{PacketPool, PooledPacketInfo};
 
-#[inline]
-fn format_mac(bytes: &[u8; 6]) -> String {
-    let mut s = String::with_capacity(17);
-    for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 {
-            s.push(':');
-        }
-        s.push(std::char::from_digit((b >> 4) as u32, 16).unwrap());
-        s.push(std::char::from_digit((b & 0xf) as u32, 16).unwrap());
-    }
-    s
-}
 
 pub struct Sniffer {
     interface: String,
@@ -56,7 +40,6 @@ impl Sniffer {
 
         // Use tokio channels for async actor-like communication
         let (db_tx, mut db_rx) = tokio::sync::mpsc::channel::<PacketInfo>(10_000);
-        let (process_tx, _) = tokio::sync::mpsc::channel::<PooledPacketInfo>(10_000);
         // Note: process_rx is used by workers. Since we have multiple workers, 
         // we can use a single receiver if we wrap it in a Mutex, or use a broadcast channel.
         // But for high-throughput packet processing, we'll use a single MPSC for all workers
@@ -69,7 +52,6 @@ impl Sniffer {
         let db = database.clone();
         tokio::spawn(async move {
             let mut batch = Vec::with_capacity(512);
-            let mut last_flush = Instant::now();
             const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
             loop {
@@ -86,14 +68,12 @@ impl Sniffer {
                         if batch.len() >= 512 {
                             db.save_packets_batch(&batch);
                             batch.clear();
-                            last_flush = Instant::now();
                         }
                     }
                     _ = tokio::time::sleep(FLUSH_INTERVAL) => {
                         if !batch.is_empty() {
                             db.save_packets_batch(&batch);
                             batch.clear();
-                            last_flush = Instant::now();
                         }
                     }
                 }

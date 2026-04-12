@@ -4,7 +4,7 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use tracing::{info, warn, debug};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::sniffer::PacketInfo;
 

@@ -14,6 +14,7 @@ use crate::AppState;
 
 use crate::web::api::{
     ApiResponse, BlocklistResponse, DnsQueryResponse, StatusResponse, TrafficStatsResponse,
+    GeoBlockRequest, GeoStatusResponse,
 };
 use crate::web::auth::{require_admin, require_auth};
 
@@ -61,6 +62,7 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/users", get(api_users_list))
         .route("/v1/users", post(api_user_create))
         .route("/v1/users/{username}", get(api_user_detail))
+        .route("/v1/users/{username}", delete(api_user_delete))
         .route("/v1/users/{username}/password", put(api_user_password))
         .route("/v1/netflow/collect", post(api_netflow_collect))
         .route("/v1/netflow/stats", get(api_netflow_stats))
@@ -95,6 +97,15 @@ pub fn create_api_router() -> Router<Arc<AppState>> {
         .route("/v1/device-groups", get(api_device_groups_get))
         .route("/v1/device-groups", put(api_device_groups_put))
         .route("/v1/device-groups/policies", put(api_device_groups_policies_put))
+        // DNS Rewrite
+        .route("/v1/dns/rewrite", get(api_dns_rewrite_list))
+        .route("/v1/dns/rewrite", post(api_dns_rewrite_add))
+        .route("/v1/dns/rewrite/{domain}", put(api_dns_rewrite_update))
+        .route("/v1/dns/rewrite/{domain}", delete(api_dns_rewrite_delete))
+        // Geo-Blocking
+        .route("/v1/firewall/geo/status", get(api_geo_status))
+        .route("/v1/firewall/geo/block", post(api_geo_block_country))
+        .route("/v1/firewall/geo/unblock/{code}", delete(api_geo_unblock_country))
 }
 
 // ─── status / health ──────────────────────────────────────────────────────────
@@ -481,10 +492,9 @@ async fn api_user_create(
     if let Err(resp) = require_admin(&state, &headers) {
         return resp;
     }
-    let role = if payload.admin {
-        UserRole::Admin
-    } else {
-        UserRole::Viewer
+    let role = match payload.role.as_str() {
+        "admin" => UserRole::Admin,
+        _ => UserRole::Viewer,
     };
     match state
         .auth
@@ -587,6 +597,43 @@ async fn api_user_password(
                 "Erro ao alterar senha: {}",
                 e
             ))),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove usuário — exige role admin.
+async fn api_user_delete(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(username): Path<String>,
+) -> impl IntoResponse {
+    let caller = match require_admin(&state, &headers) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    // Impede que o usuário exclua a si mesmo
+    if caller.sub == username {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err(
+                "Você não pode remover seu próprio usuário".to_string(),
+            )),
+        )
+            .into_response();
+    }
+
+    match state.auth.delete_user(&username) {
+        Ok(true) => Json(ApiResponse::ok(())).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::err("Usuário não encontrado".to_string())),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err(e)),
         )
             .into_response(),
     }
@@ -1460,6 +1507,83 @@ async fn api_backups_delete(
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(e))).into_response(),
     }
 }
+// ─── DNS Rewrite ─────────────────────────────────────────────────────────────
+
+async fn api_dns_rewrite_list(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    
+    Json(ApiResponse::ok(state.dns_rewrite.get_all_records())).into_response()
+}
+
+async fn api_dns_rewrite_add(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<DnsRewriteRequest>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    match payload.ip.parse::<std::net::IpAddr>() {
+        Ok(ip) => {
+            state.dns_rewrite.add_record(
+                payload.domain,
+                ip,
+                payload.ttl,
+                payload.enabled.unwrap_or(true),
+                None
+            );
+            Json(ApiResponse::ok("Record added")).into_response()
+        }
+        Err(_) => (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::err("Invalid IP address".to_string()))).into_response(),
+    }
+}
+
+async fn api_dns_rewrite_update(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(domain): Path<String>,
+    Json(payload): Json<DnsRewriteRequest>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    match payload.ip.parse::<std::net::IpAddr>() {
+        Ok(ip) => {
+            state.dns_rewrite.add_record(
+                domain,
+                ip,
+                payload.ttl,
+                payload.enabled.unwrap_or(true),
+                None
+            );
+            Json(ApiResponse::ok("Record updated")).into_response()
+        }
+        Err(_) => (StatusCode::BAD_REQUEST, Json(ApiResponse::<()>::err("Invalid IP address".to_string()))).into_response(),
+    }
+}
+
+async fn api_dns_rewrite_delete(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(domain): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp.into_response();
+    }
+    
+    if state.dns_rewrite.remove_record(&domain) {
+        Json(ApiResponse::ok("Record removed")).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::err("Record not found".to_string()))).into_response()
+    }
+}
 
 async fn api_backup_restore_specific(
     State(state): State<Arc<AppState>>,
@@ -1511,7 +1635,7 @@ struct BlockDomainRequest {
 struct CreateUserRequest {
     username: String,
     password: String,
-    admin: bool,
+    role: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -1519,6 +1643,14 @@ struct ChangePasswordRequest {
     /// Senha atual (obrigatória para usuários comuns, ignorada para admins).
     old_password: Option<String>,
     new_password: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DnsRewriteRequest {
+    domain: String,
+    ip: String,
+    ttl: u32,
+    enabled: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1530,4 +1662,58 @@ struct DpiInspectRequest {
 #[derive(serde::Deserialize)]
 struct SiemParams {
     format: Option<String>,
+}
+
+// ─── geo-blocking ─────────────────────────────────────────────────────────────
+
+async fn api_geo_status(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_auth(&state, &headers) {
+        return resp;
+    }
+    
+    let geoip = state.firewall.get_geoip();
+    let blocked = state.firewall.get_blocked_countries();
+    
+    Json(ApiResponse::ok(GeoStatusResponse {
+        is_loaded: geoip.is_loaded(),
+        blocked_countries: blocked,
+    })).into_response()
+}
+
+async fn api_geo_block_country(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<GeoBlockRequest>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
+    
+    let code = payload.country_code.trim().to_uppercase();
+    if code.len() != 2 || !code.chars().all(|c| c.is_ascii_alphabetic()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::err("Invalid ISO country code (must be 2 letters)".to_string())),
+        ).into_response();
+    }
+    
+    state.firewall.block_country(&code);
+    Json(ApiResponse::ok(())).into_response()
+}
+
+async fn api_geo_unblock_country(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(code): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_admin(&state, &headers) {
+        return resp;
+    }
+    
+    let code = code.trim().to_uppercase();
+    state.firewall.unblock_country(&code);
+    Json(ApiResponse::ok(())).into_response()
 }

@@ -108,6 +108,30 @@ impl DpiEngine {
                 application: "QUIC".to_string(),
                 category: "Web".to_string(),
             },
+            DpiRule {
+                name: "BitTorrent".to_string(),
+                pattern: "\x13BitTorrent protocol".to_string(),
+                application: "BitTorrent".to_string(),
+                category: "P2P".to_string(),
+            },
+            DpiRule {
+                name: "Stratum (Mining)".to_string(),
+                pattern: "mining.subscribe".to_string(),
+                application: "Crypto-Mining".to_string(),
+                category: "Suspicious".to_string(),
+            },
+            DpiRule {
+                name: "UPnP/SSDP".to_string(),
+                pattern: "M-SEARCH".to_string(),
+                application: "UPnP".to_string(),
+                category: "Discovery".to_string(),
+            },
+            DpiRule {
+                name: "MQTT (IoT)".to_string(),
+                pattern: "\x10".to_string(), // Connect message
+                application: "MQTT".to_string(),
+                category: "IoT".to_string(),
+            },
         ];
 
         Self {
@@ -242,8 +266,11 @@ impl DpiEngine {
         if !sensitive_data.is_empty() {
             score += 50;
         }
-        if category == "Remote Access" || category == "File Transfer" {
+        if category == "Remote Access" || category == "File Transfer" || category == "P2P" {
             score += 20;
+        }
+        if category == "Suspicious" {
+            score += 40;
         }
         if category == "Encrypted" {
             score += 10;

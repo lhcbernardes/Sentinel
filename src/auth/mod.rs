@@ -464,6 +464,31 @@ impl AuthManager {
             Ok(false)
         }
     }
+
+    pub fn delete_user(&self, username: &str) -> Result<bool, String> {
+        let mut users = self.users.write();
+
+        // Count admins before deleting
+        let admin_count = users
+            .values()
+            .filter(|u| u.role == UserRole::Admin)
+            .count();
+
+        if let Some(user) = users.get(username) {
+            if user.role == UserRole::Admin && admin_count <= 1 {
+                return Err("Não é possível remover o último administrador".to_string());
+            }
+            users.remove(username);
+
+            // Also invalidate any active sessions for this user
+            let mut sessions = self.sessions.write();
+            sessions.retain(|_, payload| payload.sub != username);
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 impl Default for AuthManager {

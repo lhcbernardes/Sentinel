@@ -30,7 +30,8 @@ fn get_oui_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("data/oui.txt"))
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_logging();
 
     info!("Starting Sentinel-RS - Network Security Monitor with Blocking");
@@ -86,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize blocking components
     let blocklist = Arc::new(blocking::Blocklist::new());
+    let dns_rewrite = Arc::new(blocking::DnsRewriteManager::new());
     
     // Load blocklists as a tokio task
     let blocklist_clone = blocklist.clone();
@@ -114,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dns_sinkhole = Arc::new(blocking::DnsSinkhole::new(
         blocklist.clone(),
+        dns_rewrite.clone(),
         !dns_sinkhole_enabled, // allow_fallback
     ));
 
@@ -135,6 +138,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             info!("Firewall manager initialized");
         }
+        
+        // Wire GeoIP from Firewall to AnomalyDetector
+        let geoip = firewall.get_geoip();
+        let blocked_countries = firewall.get_blocked_countries_set();
+        anomaly_detector.set_geoip(geoip.clone(), blocked_countries);
+        
+        // Load GeoIP database if path provided
+        if let Ok(db_path) = std::env::var("GEOIP_DB_PATH") {
+            let _ = geoip.load_database(db_path);
+        }
     }
 
     let app_state = Arc::new(AppState::new(
@@ -144,6 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         blocklist.clone(),
         dns_sinkhole.clone(),
         firewall.clone(),
+        dns_rewrite.clone(),
     ));
 
     // Shared shutdown flag for sniffer thread
@@ -185,97 +199,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting web server on http://{}", addr);
 
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        // Start DNS sinkhole as a tokio task (not a separate runtime)
-        if dns_sinkhole_enabled {
-            let dns_port: u16 = std::env::var("DNS_PORT")
-                .map(|p| p.parse().unwrap_or(53))
-                .unwrap_or(53);
+    // Start DNS sinkhole as a tokio task (not a separate runtime)
+    if dns_sinkhole_enabled {
+        let dns_port: u16 = std::env::var("DNS_PORT")
+            .map(|p| p.parse().unwrap_or(53))
+            .unwrap_or(53);
 
-            let dns = dns_sinkhole.clone();
-            tokio::spawn(async move {
-                if let Err(e) = dns.start(dns_port).await {
-                    tracing::error!("DNS sinkhole error: {}", e);
-                }
-            });
-            info!("DNS sinkhole started on port {}", dns_port);
+        let dns = dns_sinkhole.clone();
+        tokio::spawn(async move {
+            if let Err(e) = dns.start(dns_port).await {
+                tracing::error!("DNS sinkhole error: {}", e);
+            }
+        });
+        info!("DNS sinkhole started on port {}", dns_port);
+    }
+
+    // Start periodic session cleanup task
+    let auth_for_cleanup = app_state.auth.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300)); // every 5 min
+        loop {
+            interval.tick().await;
+            auth_for_cleanup.cleanup_expired();
+            tracing::debug!("Cleaned up expired sessions and login attempts");
         }
+    });
 
-        // Start periodic session cleanup task
-        let auth_for_cleanup = app_state.auth.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(300)); // every 5 min
-            loop {
-                interval.tick().await;
-                auth_for_cleanup.cleanup_expired();
-                tracing::debug!("Cleaned up expired sessions and login attempts");
-            }
-        });
+    // Start periodic template cache cleanup
+    let cache_for_cleanup = app_state.template_cache.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(600)); // every 10 min
+        loop {
+            interval.tick().await;
+            cache_for_cleanup.cleanup();
+            tracing::debug!("Cleaned up expired template cache entries");
+        }
+    });
 
-        // Start periodic template cache cleanup
-        let cache_for_cleanup = app_state.template_cache.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600)); // every 10 min
-            loop {
-                interval.tick().await;
-                cache_for_cleanup.cleanup();
-                tracing::debug!("Cleaned up expired template cache entries");
-            }
-        });
-
-        // Start periodic database cleanup task
-        let db_for_cleanup = database.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // every hour
-            interval.tick().await; // skip the first immediate tick
-            loop {
-                interval.tick().await;
-                match db_for_cleanup.cleanup_old_logs(30) {
-                    Ok(count) => {
-                        if count > 0 {
-                            tracing::info!("Periodic cleanup removed {} old records", count);
-                        }
+    // Start periodic database cleanup task
+    let db_for_cleanup = database.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(3600)); // every hour
+        interval.tick().await; // skip the first immediate tick
+        loop {
+            interval.tick().await;
+            match db_for_cleanup.cleanup_old_logs(30) {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Periodic cleanup removed {} old records", count);
                     }
-                    Err(e) => tracing::warn!("Periodic cleanup failed: {}", e),
                 }
+                Err(e) => tracing::warn!("Periodic cleanup failed: {}", e),
             }
-        });
+        }
+    });
 
-        // Bind listener
-        let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
-            error!("Failed to bind to {}: {}", addr, e);
-            format!("Failed to bind to {}: {}", addr, e)
+    // Bind listener
+    let listener = tokio::net::TcpListener::bind(&addr).await.map_err(|e| {
+        error!("Failed to bind to {}: {}", addr, e);
+        format!("Failed to bind to {}: {}", addr, e)
+    })?;
+    info!("Web server listening on http://{}", addr);
+
+    // Graceful shutdown: wait for Ctrl+C
+    let shutdown_flag_for_signal = shutdown_flag.clone();
+    let firewall_for_cleanup = firewall.clone();
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+            info!("Shutdown signal received — draining connections...");
+
+            // Signal the sniffer thread to stop
+            shutdown_flag_for_signal.store(true, Ordering::SeqCst);
+
+            // Cleanup firewall rules
+            firewall_for_cleanup.cleanup();
+            info!("Firewall rules cleaned up");
+        })
+        .await
+        .map_err(|e| {
+            error!("Web server error: {}", e);
+            format!("Web server error: {}", e)
         })?;
-        info!("Web server listening on http://{}", addr);
 
-        // Graceful shutdown: wait for Ctrl+C
-        let shutdown_flag_for_signal = shutdown_flag.clone();
-        let firewall_for_cleanup = firewall.clone();
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to install Ctrl+C handler");
-                info!("Shutdown signal received — draining connections...");
-
-                // Signal the sniffer thread to stop
-                shutdown_flag_for_signal.store(true, Ordering::SeqCst);
-
-                // Cleanup firewall rules
-                firewall_for_cleanup.cleanup();
-                info!("Firewall rules cleaned up");
-            })
-            .await
-            .map_err(|e| {
-                error!("Web server error: {}", e);
-                format!("Web server error: {}", e)
-            })?;
-
-        info!("Sentinel-RS shut down gracefully");
-        Ok::<(), String>(())
-    })
-    .map_err(|e: String| e)?;
-
+    info!("Sentinel-RS shut down gracefully");
     Ok(())
 }

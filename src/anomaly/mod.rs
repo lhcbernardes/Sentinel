@@ -1,3 +1,4 @@
+pub mod bruteforce;
 pub mod detector;
 pub mod ml_detector;
 pub mod portscan;

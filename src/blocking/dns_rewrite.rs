@@ -8,6 +8,7 @@ pub struct LocalDnsRecord {
     pub domain: String,
     pub ip: IpAddr,
     pub ttl: u32,
+    pub enabled: bool,
     pub description: Option<String>,
 }
 
@@ -35,11 +36,12 @@ impl DnsRewriteManager {
         }
     }
 
-    pub fn add_record(&self, domain: String, ip: IpAddr, ttl: u32, description: Option<String>) {
+    pub fn add_record(&self, domain: String, ip: IpAddr, ttl: u32, enabled: bool, description: Option<String>) {
         let record = LocalDnsRecord {
             domain: domain.clone(),
             ip,
             ttl,
+            enabled,
             description,
         };
         self.records.write().insert(domain.to_lowercase(), record);
@@ -56,6 +58,7 @@ impl DnsRewriteManager {
         self.records
             .read()
             .get(&domain.to_lowercase())
+            .filter(|r| r.enabled)
             .map(|r| r.ip)
     }
 

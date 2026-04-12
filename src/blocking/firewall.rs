@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::blocking::blocklist::Blocklist;
+use crate::blocking::geoip::GeoIPService;
 use bloomfilter::Bloom;
 
 fn validate_ip(ip: &str) -> Result<String, String> {
@@ -40,6 +41,8 @@ pub struct FirewallManager {
     cmd_tx: Sender<FirewallCommand>,
     shutdown: Arc<AtomicBool>,
     bloom_filter: RwLock<Bloom<String>>,
+    geoip: Arc<GeoIPService>,
+    blocked_countries: Arc<RwLock<HashSet<String>>>,
 }
 
 impl FirewallManager {
@@ -72,6 +75,8 @@ impl FirewallManager {
             cmd_tx,
             shutdown,
             bloom_filter: RwLock::new(Bloom::new_for_fp_rate(100000, 0.01)),
+            geoip: Arc::new(GeoIPService::new()),
+            blocked_countries: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -274,6 +279,34 @@ impl FirewallManager {
 
     pub fn block_port_scan(&self, ip: &str) -> Result<(), String> {
         self.block_ip(ip)
+    }
+
+    pub fn block_country(&self, country_code: &str) {
+        let mut blocked = self.blocked_countries.write();
+        blocked.insert(country_code.to_uppercase());
+        tracing::info!("Blocked country: {}", country_code);
+    }
+
+    pub fn unblock_country(&self, country_code: &str) {
+        let mut blocked = self.blocked_countries.write();
+        blocked.remove(&country_code.to_uppercase());
+        tracing::info!("Unblocked country: {}", country_code);
+    }
+
+    pub fn is_country_blocked(&self, country_code: &str) -> bool {
+        self.blocked_countries.read().contains(&country_code.to_uppercase())
+    }
+
+    pub fn get_geoip(&self) -> Arc<GeoIPService> {
+        self.geoip.clone()
+    }
+
+    pub fn get_blocked_countries(&self) -> Vec<String> {
+        self.blocked_countries.read().iter().cloned().collect()
+    }
+
+    pub fn get_blocked_countries_set(&self) -> Arc<RwLock<HashSet<String>>> {
+        self.blocked_countries.clone()
     }
 
     pub fn get_blocked_ips(&self) -> Vec<String> {

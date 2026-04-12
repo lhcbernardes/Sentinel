@@ -145,3 +145,14 @@ impl Default for ApiHandler {
         Self::new()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoBlockRequest {
+    pub country_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoStatusResponse {
+    pub is_loaded: bool,
+    pub blocked_countries: Vec<String>,
+}

@@ -7,6 +7,7 @@ use std::time::Instant;
 use tokio::net::UdpSocket;
 
 use crate::blocking::blocklist::Blocklist;
+use crate::blocking::dns_rewrite::DnsRewriteManager;
 
 #[derive(Clone)]
 struct CachedResponse {
@@ -29,6 +30,7 @@ impl CachedResponse {
 
 pub struct DnsSinkhole {
     blocklist: Arc<Blocklist>,
+    rewrite_manager: Arc<DnsRewriteManager>,
     blocked_count: AtomicU64,
     query_count: AtomicU64,
     allow_fallback: bool,
@@ -38,11 +40,12 @@ pub struct DnsSinkhole {
 }
 
 impl DnsSinkhole {
-    pub fn new(blocklist: Arc<Blocklist>, allow_fallback: bool) -> Self {
+    pub fn new(blocklist: Arc<Blocklist>, rewrite_manager: Arc<DnsRewriteManager>, allow_fallback: bool) -> Self {
         let platform_supported = Self::check_platform_support();
 
         let sinkhole = Self {
             blocklist,
+            rewrite_manager,
             blocked_count: AtomicU64::new(0),
             query_count: AtomicU64::new(0),
             allow_fallback,
@@ -159,8 +162,19 @@ impl DnsSinkhole {
 
         // Count query atomically
         self.query_count.fetch_add(1, Ordering::Relaxed);
-
-        let is_blocked = self.blocklist.is_blocked(&domain_lower);
+        
+        // 1. Check for local rewrite overrides first
+        let local_rewrite = if self.rewrite_manager.is_enabled() {
+            self.rewrite_manager.lookup(&domain_lower)
+        } else {
+            None
+        };
+        
+        let is_blocked = if local_rewrite.is_none() {
+            self.blocklist.is_blocked(&domain_lower)
+        } else {
+            false
+        };
 
         // Extract the question section from the original packet for inclusion in responses
         let question_section = self.extract_question_section(packet);
@@ -187,7 +201,10 @@ impl DnsSinkhole {
 
         tracing::debug!("DNS query for: {} from {}", domain_lower, client_ip);
 
-        let response = if is_blocked {
+        let response = if let Some(ip) = local_rewrite {
+            tracing::debug!("Local rewrite for: {} to {}", domain_lower, ip);
+            self.create_a_response(id, &question_section, ip)
+        } else if is_blocked {
             self.blocked_count.fetch_add(1, Ordering::Relaxed);
             tracing::info!("Blocked DNS query for: {} from {}", domain_lower, client_ip);
             self.create_nxdomain_response(id, &question_section)
@@ -279,6 +296,10 @@ impl DnsSinkhole {
     }
 
     fn create_localhost_response(&self, id: u16, question: &[u8]) -> Vec<u8> {
+        self.create_a_response(id, question, std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+    }
+
+    fn create_a_response(&self, id: u16, question: &[u8], ip: std::net::IpAddr) -> Vec<u8> {
         let mut response = Vec::with_capacity(12 + question.len() + 16);
 
         // Header
@@ -294,11 +315,23 @@ impl DnsSinkhole {
 
         // Answer section: point back to the name in the question (compression pointer 0xC00C)
         response.extend_from_slice(&[0xC0, 0x0C]); // Name: pointer to offset 12 (question name)
-        response.extend_from_slice(&[0x00, 0x01]); // TYPE: A (1)
-        response.extend_from_slice(&[0x00, 0x01]); // CLASS: IN (1)
-        response.extend_from_slice(&[0x00, 0x00, 0x01, 0x2C]); // TTL: 300 seconds
-        response.extend_from_slice(&[0x00, 0x04]); // RDLENGTH: 4 bytes
-        response.extend_from_slice(&[127, 0, 0, 1]); // RDATA: 127.0.0.1
+        
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                response.extend_from_slice(&[0x00, 0x01]); // TYPE: A (1)
+                response.extend_from_slice(&[0x00, 0x01]); // CLASS: IN (1)
+                response.extend_from_slice(&[0x00, 0x00, 0x01, 0x2C]); // TTL: 300 seconds
+                response.extend_from_slice(&[0x00, 0x04]); // RDLENGTH: 4 bytes
+                response.extend_from_slice(&ipv4.octets()); // RDATA
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                response.extend_from_slice(&[0x00, 0x1C]); // TYPE: AAAA (28)
+                response.extend_from_slice(&[0x00, 0x01]); // CLASS: IN (1)
+                response.extend_from_slice(&[0x00, 0x00, 0x01, 0x2C]); // TTL: 300 seconds
+                response.extend_from_slice(&[0x00, 0x10]); // RDLENGTH: 16 bytes
+                response.extend_from_slice(&ipv6.octets()); // RDATA
+            }
+        }
 
         response
     }
