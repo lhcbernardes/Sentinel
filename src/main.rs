@@ -58,9 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Initialize OUI database in a separate thread (non-blocking)
+    // Initialize OUI database as a tokio task (non-blocking)
     let oui_path = get_oui_path();
-    let _oui_handle = std::thread::spawn(move || {
+    tokio::spawn(async move {
         if oui_path.exists() {
             match oui::load_oui_database(&oui_path) {
                 Ok(()) => info!("OUI database loaded from {:?}", oui_path),
@@ -87,9 +87,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize blocking components
     let blocklist = Arc::new(blocking::Blocklist::new());
     
-    // Load blocklists in parallel
+    // Load blocklists as a tokio task
     let blocklist_clone = blocklist.clone();
-    let blocklist_handle = std::thread::spawn(move || {
+    tokio::spawn(async move {
         blocklist_clone.load_default_lists();
         let blocklists_dir = PathBuf::from("data/blocklists");
         if blocklists_dir.exists() {
@@ -127,7 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     // Wait for blocklist loading to complete
-    let _ = blocklist_handle.join();
     // OUI loading is running in background, don't wait for it
 
     if firewall_enabled {
@@ -157,6 +156,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if sniffer_enabled {
         let sniffer = Sniffer::new(interface);
+        
+        // Start background tasks for managers
+        device_manager.clone().start_sync_task(database.clone());
+        
+        let ad_cleanup = anomaly_detector.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                ad_cleanup.cleanup();
+            }
+        });
+
         sniffer.start(
             app_state.packet_tx.clone(),
             device_manager,
@@ -164,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             database.clone(),
             shutdown_flag.clone(),
         );
-        info!("Sniffer started");
+        info!("Sniffer and background managers started");
     }
 
     // Start web server and async tasks on a single tokio runtime

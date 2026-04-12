@@ -450,6 +450,46 @@ impl Database {
         conn.execute("VACUUM", []).map_err(|e| format!("Failed to vacuum: {}", e))?;
         Ok(())
     }
+
+    pub fn save_devices_batch(&self, devices: &[Device]) -> Result<(), String> {
+        let mut conn = self.conn.lock();
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to start transaction: {}", e))?;
+
+        {
+            let mut stmt = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO devices (
+                        mac_address, ip_address, hostname, manufacturer, first_seen, last_seen,
+                        packet_count, total_bytes, open_ports, risk_level, is_local
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                )
+                .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+
+            for device in devices {
+                let open_ports = serde_json::to_string(&device.open_ports).unwrap_or_default();
+                stmt.execute(params![
+                    device.mac_address,
+                    device.ip_address,
+                    device.hostname,
+                    device.manufacturer,
+                    device.first_seen,
+                    device.last_seen,
+                    device.packet_count,
+                    device.total_bytes,
+                    open_ports,
+                    format!("{}", device.risk_level),
+                    if device.is_local { 1 } else { 0 }
+                ])
+                .map_err(|e| format!("Failed to save device {}: {}", device.mac_address, e))?;
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,17 +6,30 @@
   </p>
 
   <p>
-    <a href="https://github.com/lhcbernardes/Sentinel/actions"><img src="https://img.shields.io/github/actions/workflow/status/lhcbernardes/Sentinel/ci.yml?style=for-the-badge&logo=github-actions" alt="CI Status" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs/actions"><img src="https://img.shields.io/github/actions/workflow/status/sentinel-rs/sentinel-rs/ci.yml?style=for-the-badge&logo=github-actions" alt="CI Status" /></a>
     <a href="https://crates.io/crates/sentinel-rs"><img src="https://img.shields.io/crates/v/sentinel-rs?style=for-the-badge" alt="crates.io" /></a>
-    <img src="https://img.shields.io/badge/rust-1.70%2B-EF4A25?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Version" />
-    <a href="https://github.com/lhcbernardes/Sentinel/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lhcbernardes/Sentinel?style=for-the-badge" alt="License" /></a>
+    <img src="https://img.shields.io/github/languages/top/sentinel-rs/sentinel-rs?style=for-the-badge&logo=rust&logoColor=white" alt="Top Language" />
+    <a href="https://github.com/sentinel-rs/sentinel-rs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/sentinel-rs/sentinel-rs?style=for-the-badge" alt="License" /></a>
   </p>
 
   <p>
-    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/framework-Axum-000000?style=for-the-badge" alt="Axum Framework" /></a>
-    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/UI-TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" /></a>
-    <a href="https://github.com/lhcbernardes/Sentinel"><img src="https://img.shields.io/badge/security-JWT%20(HS256)-blue?style=for-the-badge&logo=jsonwebtokens" alt="JWT Secured" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs/stars"><img src="https://img.shields.io/github/stars/sentinel-rs/sentinel-rs?style=for-the-badge&color=gold" alt="GitHub Stars" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs/network/members"><img src="https://img.shields.io/github/forks/sentinel-rs/sentinel-rs?style=for-the-badge&color=blue" alt="GitHub Forks" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs/issues"><img src="https://img.shields.io/github/issues/sentinel-rs/sentinel-rs?style=for-the-badge&color=red" alt="GitHub Issues" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs/pulls"><img src="https://img.shields.io/github/issues-pr/sentinel-rs/sentinel-rs?style=for-the-badge&color=orange" alt="GitHub PRs" /></a>
+  </p>
+
+  <p>
+    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/framework-Axum-000000?style=for-the-badge" alt="Axum Framework" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/UI-TailwindCSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS" /></a>
+    <a href="https://github.com/sentinel-rs/sentinel-rs"><img src="https://img.shields.io/badge/security-JWT%20(HS256)-blue?style=for-the-badge&logo=jsonwebtokens" alt="JWT Secured" /></a>
     <img src="https://img.shields.io/badge/SSE-Live%20Events-FF6B6B?style=for-the-badge" alt="Server-Sent Events" />
+  </p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Maintained%3F-Yes-green?style=for-the-badge" alt="Maintained" />
+    <a href="https://github.com/sentinel-rs/sentinel-rs/graphs/contributors"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge" alt="PRs Welcome" /></a>
+    <img src="https://img.shields.io/badge/rust-1.70%2B-EF4A25?style=for-the-badge&logo=rust&logoColor=white" alt="Rust Version" />
   </p>
 </div>
 

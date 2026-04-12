@@ -42,6 +42,44 @@ impl PacketPool {
     }
 }
 
+impl PacketInfoReusable {
+    pub fn populate(&mut self, timestamp: i64, size: u32, protocol: u8) {
+        self.timestamp = timestamp;
+        self.size = size;
+        self.protocol = protocol;
+    }
+
+    pub fn set_ipv4_src(&mut self, addr: [u8; 4]) {
+        self.src_ip[0..4].copy_from_slice(&addr);
+        self.src_ip_len = 4;
+    }
+
+    pub fn set_ipv4_dst(&mut self, addr: [u8; 4]) {
+        self.dst_ip[0..4].copy_from_slice(&addr);
+        self.dst_ip_len = 4;
+    }
+
+    pub fn set_ipv6_src(&mut self, addr: [u8; 16]) {
+        self.src_ip.copy_from_slice(&addr);
+        self.src_ip_len = 16;
+    }
+
+    pub fn set_ipv6_dst(&mut self, addr: [u8; 16]) {
+        self.dst_ip.copy_from_slice(&addr);
+        self.dst_ip_len = 16;
+    }
+
+    pub fn set_mac_src(&mut self, addr: [u8; 6]) {
+        self.src_mac.copy_from_slice(&addr);
+        self.has_src_mac = true;
+    }
+
+    pub fn set_mac_dst(&mut self, addr: [u8; 6]) {
+        self.dst_mac.copy_from_slice(&addr);
+        self.has_dst_mac = true;
+    }
+}
+
 pub struct PooledPacketInfo {
     pool: Arc<PacketPool>,
     inner: PacketInfoReusable,
@@ -66,6 +104,43 @@ impl PooledPacketInfo {
         });
 
         Self { pool, inner }
+    }
+
+    pub fn populate(&mut self, timestamp: i64, size: u32, protocol: u8) {
+        self.inner.populate(timestamp, size, protocol);
+    }
+
+    pub fn set_ipv4_src(&mut self, addr: [u8; 4]) {
+        self.inner.set_ipv4_src(addr);
+    }
+
+    pub fn set_ipv4_dst(&mut self, addr: [u8; 4]) {
+        self.inner.set_ipv4_dst(addr);
+    }
+
+    pub fn set_ipv6_src(&mut self, addr: [u8; 16]) {
+        self.inner.set_ipv6_src(addr);
+    }
+
+    pub fn set_ipv6_dst(&mut self, addr: [u8; 16]) {
+        self.inner.set_ipv6_dst(addr);
+    }
+
+    pub fn set_mac_src(&mut self, addr: [u8; 6]) {
+        self.inner.set_mac_src(addr);
+    }
+
+    pub fn set_mac_dst(&mut self, addr: [u8; 6]) {
+        self.inner.set_mac_dst(addr);
+    }
+
+    pub fn set_ports(&mut self, src: Option<u16>, dst: Option<u16>) {
+        self.inner.src_port = src;
+        self.inner.dst_port = dst;
+    }
+
+    pub fn set_protocol(&mut self, protocol: u8) {
+        self.inner.protocol = protocol;
     }
 
     pub fn into_owned(self) -> crate::sniffer::PacketInfo {

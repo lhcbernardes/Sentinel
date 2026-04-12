@@ -11,46 +11,7 @@ use crate::sniffer::packet::{PacketInfo, Protocol};
 use bytes::BytesMut;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio::sync::broadcast;
-
-
-// Packet pool for reducing allocations
-#[derive(Clone)]
-pub struct PacketPool {
-    pool: Arc<parking_lot::Mutex<Vec<BytesMut>>>,
-    buffer_size: usize,
-}
-
-impl PacketPool {
-    pub fn new(buffer_size: usize, pool_size: usize) -> Self {
-        let pool = Arc::new(parking_lot::Mutex::new(
-            (0..pool_size)
-                .map(|_| BytesMut::with_capacity(buffer_size))
-                .collect(),
-        ));
-        Self { pool, buffer_size }
-    }
-
-    pub fn get(&self) -> BytesMut {
-        let mut pool = self.pool.lock();
-        pool.pop()
-            .unwrap_or_else(|| BytesMut::with_capacity(self.buffer_size))
-    }
-
-    pub fn put(&self, mut buffer: BytesMut) {
-        buffer.clear();
-        let mut pool = self.pool.lock();
-        if pool.len() < 1000 {
-            // Limit pool size
-            pool.push(buffer);
-        }
-    }
-}
-
-impl Default for PacketPool {
-    fn default() -> Self {
-        Self::new(2048, 100)
-    }
-}
+use crate::sniffer::pool::{PacketPool, PooledPacketInfo};
 
 #[inline]
 fn format_mac(bytes: &[u8; 6]) -> String {
@@ -90,143 +51,123 @@ impl Sniffer {
             .unwrap_or(4)
             .max(2);
 
-        let (db_tx, db_rx) = std::sync::mpsc::sync_channel::<PacketInfo>(10_000);
-        let (process_tx, process_rx): (Sender<PacketInfo>, Receiver<PacketInfo>) = bounded(10_000);
+        // Initialize PacketPool (shared across capture and workers)
+        let pool = Arc::new(PacketPool::new(1000));
 
+        // Use tokio channels for async actor-like communication
+        let (db_tx, mut db_rx) = tokio::sync::mpsc::channel::<PacketInfo>(10_000);
+        let (process_tx, _) = tokio::sync::mpsc::channel::<PooledPacketInfo>(10_000);
+        // Note: process_rx is used by workers. Since we have multiple workers, 
+        // we can use a single receiver if we wrap it in a Mutex, or use a broadcast channel.
+        // But for high-throughput packet processing, we'll use a single MPSC for all workers
+        // and have them pull from it.
+        let (worker_tx, worker_rx) = tokio::sync::mpsc::channel::<PooledPacketInfo>(10_000);
+        let worker_rx = Arc::new(tokio::sync::Mutex::new(worker_rx));
+
+        // Database Actor Task
         let db_shutdown = shutdown.clone();
         let db = database.clone();
-        std::thread::spawn(move || {
-            let mut batch = Vec::with_capacity(256); // Increased initial capacity
+        tokio::spawn(async move {
+            let mut batch = Vec::with_capacity(512);
             let mut last_flush = Instant::now();
-            const FLUSH_INTERVAL_MS: u64 = 100; // More frequent flushing
-            const MAX_BATCH_SIZE: usize = 512; // Larger max batch size
+            const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
             loop {
-                let timeout = if batch.is_empty() {
-                    Duration::from_millis(FLUSH_INTERVAL_MS)
-                } else {
-                    // Adjust timeout based on batch size to prevent starvation
-                    let elapsed = last_flush.elapsed();
-                    if elapsed.as_millis() >= FLUSH_INTERVAL_MS as u128 {
-                        Duration::from_millis(0) // Time to flush
-                    } else {
-                        Duration::from_millis(
-                            FLUSH_INTERVAL_MS.saturating_sub(elapsed.as_millis() as u64),
-                        )
-                    }
-                };
-
-                if db_shutdown.load(Ordering::Relaxed) && db_rx.try_recv().is_err() {
+                if db_shutdown.load(Ordering::Relaxed) && db_rx.is_empty() {
                     if !batch.is_empty() {
                         db.save_packets_batch(&batch);
                     }
                     break;
                 }
 
-                match db_rx.recv_timeout(timeout) {
-                    Ok(packet) => {
+                tokio::select! {
+                    Some(packet) = db_rx.recv() => {
                         batch.push(packet);
-                        // Process any additional available packets without blocking
-                        while let Ok(p) = db_rx.try_recv() {
-                            batch.push(p);
-                            if batch.len() >= MAX_BATCH_SIZE {
-                                break;
-                            }
+                        if batch.len() >= 512 {
+                            db.save_packets_batch(&batch);
+                            batch.clear();
+                            last_flush = Instant::now();
                         }
                     }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-
-                // Flush if we have enough packets or time has elapsed
-                if !batch.is_empty()
-                    && (batch.len() >= MAX_BATCH_SIZE
-                        || last_flush.elapsed().as_millis() >= FLUSH_INTERVAL_MS as u128)
-                {
-                    db.save_packets_batch(&batch);
-                    batch.clear();
-                    last_flush = Instant::now();
+                    _ = tokio::time::sleep(FLUSH_INTERVAL) => {
+                        if !batch.is_empty() {
+                            db.save_packets_batch(&batch);
+                            batch.clear();
+                            last_flush = Instant::now();
+                        }
+                    }
                 }
             }
-            tracing::info!("Database writer thread stopped");
+            tracing::info!("Database writer actor stopped");
         });
 
+        // Worker Actor Tasks
         let worker_device_manager = device_manager.clone();
         let worker_anomaly_detector = anomaly_detector.clone();
         let worker_shutdown = shutdown.clone();
+        
         for i in 0..num_workers {
-            let rx = process_rx.clone();
+            let rx = worker_rx.clone();
             let dm = worker_device_manager.clone();
             let ad = worker_anomaly_detector.clone();
             let sd = worker_shutdown.clone();
-            std::thread::spawn(move || {
-                let mut batch = Vec::with_capacity(32);
-                let mut last_process = Instant::now();
-                const PROCESS_INTERVAL_MS: u64 = 10; // Process every 10ms max latency
-                const MAX_BATCH_SIZE: usize = 128;
+            let p_tx = packet_tx.clone();
+            let d_tx = db_tx.clone();
+            
+            tokio::spawn(async move {
+                let mut batch = Vec::with_capacity(128);
+                const PROCESS_INTERVAL: Duration = Duration::from_millis(10);
 
                 loop {
-                    let timeout = if batch.is_empty() {
-                        Duration::from_millis(PROCESS_INTERVAL_MS)
-                    } else {
-                        // Adjust timeout based on batch size and time elapsed
-                        let elapsed = last_process.elapsed();
-                        if elapsed.as_millis() >= PROCESS_INTERVAL_MS as u128 {
-                            Duration::from_millis(0) // Time to process
-                        } else {
-                            Duration::from_millis(
-                                PROCESS_INTERVAL_MS.saturating_sub(elapsed.as_millis() as u64),
-                            )
-                        }
-                    };
-
-                    if sd.load(Ordering::Relaxed) {
-                        // Process remaining packets before shutting down
-                        if !batch.is_empty() {
-                            for packet in batch.drain(..) {
-                                dm.process_packet(&packet);
-                                ad.analyze(&packet);
-                            }
-                        }
+                    if sd.load(Ordering::Relaxed) && rx.lock().await.is_empty() {
                         break;
                     }
 
-                    match rx.recv_timeout(timeout) {
-                        Ok(packet) => {
-                            batch.push(packet);
-                            // Process any additional available packets without blocking
-                            while let Ok(p) = rx.try_recv() {
-                                batch.push(p);
-                                if batch.len() >= MAX_BATCH_SIZE {
-                                    break;
+                    let mut rx_lock = rx.lock().await;
+                    match tokio::time::timeout(PROCESS_INTERVAL, rx_lock.recv()).await {
+                        Ok(Some(pooled)) => {
+                            let info = pooled.into_owned();
+                            // Broadcast to UI
+                            let _ = p_tx.send(info.clone());
+                            // Send to DB
+                            let _ = d_tx.try_send(info.clone());
+                            
+                            batch.push(info);
+                            
+                            if batch.len() >= 128 {
+                                ad.batch_analyze(&batch);
+                                for p in batch.drain(..) {
+                                    dm.process_packet(&p);
                                 }
+                                batch.clear();
                             }
                         }
-                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-                    }
-
-                    // Process batch if we have enough packets or time has elapsed
-                    if !batch.is_empty()
-                        && (batch.len() >= MAX_BATCH_SIZE
-                            || last_process.elapsed().as_millis() >= PROCESS_INTERVAL_MS as u128)
-                    {
-                        // Use the new batch_analyze for parallel processing of the batch itself
-                        ad.batch_analyze(&batch);
-                        
-                        for packet in batch.drain(..) {
-                            dm.process_packet(&packet);
+                        _ => {
+                            if !batch.is_empty() {
+                                ad.batch_analyze(&batch);
+                                for p in batch.drain(..) {
+                                    dm.process_packet(&p);
+                                }
+                                batch.clear();
+                            }
                         }
-                        last_process = Instant::now();
                     }
+                    drop(rx_lock);
+                    tokio::task::yield_now().await;
                 }
-                tracing::debug!("Worker {} stopped", i);
+                tracing::debug!("Worker actor {} stopped", i);
             });
         }
-        tracing::info!("Started {} packet processing workers", num_workers);
+        tracing::info!("Started {} packet processing worker actors", num_workers);
 
-        std::thread::spawn(move || {
-            tracing::info!("Starting sniffer on interface: {}", interface);
+        // Capture Actor Task (Blocking)
+        let capture_shutdown = shutdown.clone();
+        let capture_interface = interface.clone();
+        let capture_pool = pool.clone();
+        let capture_worker_tx = worker_tx.clone();
+
+        tokio::task::spawn_blocking(move || {
+            tracing::info!("Starting sniffer on interface: {}", capture_interface);
 
             let devices = match Device::list() {
                 Ok(list) if !list.is_empty() => list,
@@ -236,21 +177,17 @@ impl Sniffer {
                 }
             };
 
-            let device_name = if interface.is_empty() {
+            let device_name = if capture_interface.is_empty() {
                 devices[0].name.clone()
             } else {
-                interface
+                capture_interface
             };
 
             let device = match devices.into_iter().find(|d| d.name == device_name) {
                 Some(d) => d,
                 None => match Device::lookup() {
                     Ok(Some(d)) => {
-                        tracing::warn!(
-                            "Interface '{}' not found, falling back to default: {}",
-                            device_name,
-                            d.name
-                        );
+                        tracing::warn!("Interface '{}' not found, falling back to default: {}", device_name, d.name);
                         d
                     }
                     Ok(None) => {
@@ -283,121 +220,96 @@ impl Sniffer {
             tracing::info!("Capture opened successfully on {}", device_name);
 
             loop {
-                if shutdown.load(Ordering::Relaxed) {
+                if capture_shutdown.load(Ordering::Relaxed) {
                     tracing::info!("Sniffer received shutdown signal");
                     break;
                 }
 
                 match active_cap.next_packet() {
                     Ok(packet) => {
-                        if let Some(info) = parse_packet(packet.data) {
-                            let _ = packet_tx.send(info.clone());
-                            let _ = process_tx.try_send(info.clone());
-                            let _ = db_tx.try_send(info);
+                        if let Some(pooled) = parse_packet_pooled(packet.data, capture_pool.clone()) {
+                            let _ = capture_worker_tx.try_send(pooled);
                         }
                     }
-                    Err(pcap::Error::TimeoutExpired) => {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
+                    Err(pcap::Error::TimeoutExpired) => {}
                     Err(e) => {
                         tracing::warn!("Packet capture error: {}", e);
                     }
                 }
             }
-            tracing::info!("Sniffer thread stopped");
+            tracing::info!("Sniffer capture task stopped");
         });
     }
 }
 
-fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
+fn parse_packet_pooled(data: &[u8], pool: Arc<PacketPool>) -> Option<PooledPacketInfo> {
     use etherparse::{NetSlice, SlicedPacket};
 
     let sliced = SlicedPacket::from_ethernet(data).ok()?;
+    let mut pooled = PooledPacketInfo::new(pool);
+    let now = chrono::Utc::now().timestamp_millis();
 
-    let (src_ip, dst_ip, src_port, dst_port, protocol, size) = match sliced.net {
+    match sliced.net {
         Some(NetSlice::Ipv4(ipv4)) => {
-            let src = IpAddr::V4(Ipv4Addr::from(ipv4.header().source()));
-            let dst = IpAddr::V4(Ipv4Addr::from(ipv4.header().destination()));
-            let proto = ipv4.header().protocol().0;
+            pooled.populate(now, ipv4.header().total_len() as u32, ipv4.header().protocol().0);
+            pooled.set_ipv4_src(ipv4.header().source());
+            pooled.set_ipv4_dst(ipv4.header().destination());
 
-            let (sp, dp, proto_str) = match sliced.transport {
-                Some(etherparse::TransportSlice::Tcp(tcp)) => (
-                    Some(tcp.source_port()),
-                    Some(tcp.destination_port()),
-                    Protocol::Tcp,
-                ),
-                Some(etherparse::TransportSlice::Udp(udp)) => (
-                    Some(udp.source_port()),
-                    Some(udp.destination_port()),
-                    Protocol::Udp,
-                ),
-                Some(etherparse::TransportSlice::Icmpv4(_)) => (None, None, Protocol::Icmp),
-                _ => (None, None, Protocol::from(proto)),
-            };
-
-            // Use actual total length from IP header instead of hardcoded value
-            let total_len = ipv4.header().total_len() as u32;
-            (src, dst, sp, dp, proto_str, total_len)
+            if let Some(transport) = sliced.transport {
+                match transport {
+                    etherparse::TransportSlice::Tcp(tcp) => {
+                        pooled.set_ports(Some(tcp.source_port()), Some(tcp.destination_port()));
+                        pooled.set_protocol(6);
+                    }
+                    etherparse::TransportSlice::Udp(udp) => {
+                        pooled.set_ports(Some(udp.source_port()), Some(udp.destination_port()));
+                        pooled.set_protocol(17);
+                    }
+                    etherparse::TransportSlice::Icmpv4(_) => {
+                        pooled.set_protocol(1);
+                    }
+                    _ => {}
+                }
+            }
         }
         Some(NetSlice::Ipv6(ipv6)) => {
-            let src = IpAddr::V6(Ipv6Addr::from(ipv6.header().source()));
-            let dst = IpAddr::V6(Ipv6Addr::from(ipv6.header().destination()));
-            let proto = ipv6.header().next_header().0;
+            pooled.populate(now, 40 + ipv6.header().payload_length() as u32, ipv6.header().next_header().0);
+            pooled.set_ipv6_src(ipv6.header().source());
+            pooled.set_ipv6_dst(ipv6.header().destination());
 
-            let (sp, dp, proto_str) = match sliced.transport {
-                Some(etherparse::TransportSlice::Tcp(tcp)) => (
-                    Some(tcp.source_port()),
-                    Some(tcp.destination_port()),
-                    Protocol::Tcp,
-                ),
-                Some(etherparse::TransportSlice::Udp(udp)) => (
-                    Some(udp.source_port()),
-                    Some(udp.destination_port()),
-                    Protocol::Udp,
-                ),
-                Some(etherparse::TransportSlice::Icmpv6(_)) => (None, None, Protocol::Icmp),
-                _ => (None, None, Protocol::from(proto)),
-            };
-
-            // IPv6: 40-byte header + payload_length
-            let total_len = 40 + ipv6.header().payload_length() as u32;
-            (src, dst, sp, dp, proto_str, total_len)
+            if let Some(transport) = sliced.transport {
+                match transport {
+                    etherparse::TransportSlice::Tcp(tcp) => {
+                        pooled.set_ports(Some(tcp.source_port()), Some(tcp.destination_port()));
+                        pooled.set_protocol(6);
+                    }
+                    etherparse::TransportSlice::Udp(udp) => {
+                        pooled.set_ports(Some(udp.source_port()), Some(udp.destination_port()));
+                        pooled.set_protocol(17);
+                    }
+                    etherparse::TransportSlice::Icmpv6(_) => {
+                        pooled.set_protocol(58); // ICMPv6
+                    }
+                    _ => {}
+                }
+            }
         }
         _ => return None,
-    };
+    }
 
-    let (src_mac, dst_mac) = if data.len() >= 12 {
-        let src_mac_bytes: &[u8; 6] = &data[0..6].try_into().unwrap();
-        let dst_mac_bytes: &[u8; 6] = &data[6..12].try_into().unwrap();
+    if data.len() >= 12 {
+        let src_mac_bytes: [u8; 6] = data[0..6].try_into().unwrap_or([0; 6]);
+        let dst_mac_bytes: [u8; 6] = data[6..12].try_into().unwrap_or([0; 6]);
 
-        let src_mac = if src_mac_bytes.iter().any(|&b| b != 0) {
-            Some(Cow::Owned(format_mac(src_mac_bytes)))
-        } else {
-            None
-        };
+        if src_mac_bytes.iter().any(|&b| b != 0) {
+            pooled.set_mac_src(src_mac_bytes);
+        }
+        if dst_mac_bytes.iter().any(|&b| b != 0) {
+            pooled.set_mac_dst(dst_mac_bytes);
+        }
+    }
 
-        let dst_mac = if dst_mac_bytes.iter().any(|&b| b != 0) {
-            Some(Cow::Owned(format_mac(dst_mac_bytes)))
-        } else {
-            None
-        };
-
-        (src_mac, dst_mac)
-    } else {
-        (None, None)
-    };
-
-    Some(PacketInfo {
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        src_ip,
-        dst_ip,
-        src_port,
-        dst_port,
-        protocol,
-        size,
-        src_mac,
-        dst_mac,
-    })
+    Some(pooled)
 }
 
 pub fn list_interfaces() -> Vec<String> {

@@ -2,12 +2,15 @@ use crate::devices::device::{Device, RiskLevel};
 use crate::devices::oui::lookup_manufacturer;
 use dashmap::DashMap;
 use tokio::sync::broadcast;
-use tracing::info;
+use tracing::{info, warn, debug};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::sniffer::PacketInfo;
 
 pub struct DeviceManager {
     devices: DashMap<String, Device>,
+    dirty: DashMap<String, bool>,
     alert_tx: broadcast::Sender<crate::anomaly::Alert>,
 }
 
@@ -15,6 +18,7 @@ impl DeviceManager {
     pub fn new(alert_tx: broadcast::Sender<crate::anomaly::Alert>) -> Self {
         Self {
             devices: DashMap::with_capacity(256),
+            dirty: DashMap::with_capacity(256),
             alert_tx,
         }
     }
@@ -55,6 +59,65 @@ impl DeviceManager {
         // Mutate the device in-place
         device.update(packet);
         device.risk_level = RiskLevel::from_open_ports(device.open_ports.len());
+        
+        // Mark as dirty for sync
+        self.dirty.insert(mac_key, true);
+    }
+
+    pub fn start_sync_task(self: Arc<Self>, database: Arc<crate::db::Database>) {
+        let manager = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); 
+            const TTL: i64 = 300_000; // 5 minutes in milliseconds
+
+            loop {
+                interval.tick().await;
+                let now = chrono::Utc::now().timestamp_millis();
+                
+                // 1. Sync dirty devices to DB
+                let mut dirty_macs = Vec::new();
+                for r in manager.dirty.iter() {
+                    if *r.value() {
+                        dirty_macs.push(r.key().clone());
+                    }
+                }
+                manager.dirty.clear();
+
+                if !dirty_macs.is_empty() {
+                    let mut devices_to_sync = Vec::with_capacity(dirty_macs.len());
+                    for mac in &dirty_macs {
+                        if let Some(device) = manager.devices.get(mac) {
+                            devices_to_sync.push(device.clone());
+                        }
+                    }
+
+                    if !devices_to_sync.is_empty() {
+                        if let Err(e) = database.save_devices_batch(&devices_to_sync) {
+                            warn!("Failed to sync devices to database: {}", e);
+                            // Re-mark as dirty if failed
+                            for mac in dirty_macs {
+                                manager.dirty.insert(mac, true);
+                            }
+                        } else {
+                            debug!("Synced {} dirty devices to database", devices_to_sync.len());
+                        }
+                    }
+                }
+
+                // 2. Cache eviction (TTL)
+                let mut to_evict = Vec::new();
+                for r in manager.devices.iter() {
+                    if now - r.value().last_seen > TTL {
+                        to_evict.push(r.key().clone());
+                    }
+                }
+
+                for mac in to_evict {
+                    debug!("Evicting inactive device from cache: {}", mac);
+                    manager.devices.remove(&mac);
+                }
+            }
+        });
     }
 
     pub fn get_all(&self) -> Vec<Device> {
@@ -70,6 +133,7 @@ impl DeviceManager {
             if !device.open_ports.contains(&port) {
                 device.open_ports.push(port);
                 device.risk_level = RiskLevel::from_open_ports(device.open_ports.len());
+                self.dirty.insert(mac.to_string(), true);
             }
         }
     }
@@ -86,7 +150,7 @@ impl DeviceManager {
         DeviceStats {
             total_devices: total,
             local_devices: local_count,
-            remote_devices: total - local_count,
+            remote_devices: if total > local_count { total - local_count } else { 0 },
             high_risk_count: high_risk,
         }
     }
@@ -99,8 +163,6 @@ fn is_local_mac(mac: &str) -> bool {
     }
 
     let first = u8::from_str_radix(parts[0], 16).unwrap_or(0);
-    let _second = u8::from_str_radix(parts[1], 16).unwrap_or(0);
-
     (first & 0x02) != 0
 }
 
