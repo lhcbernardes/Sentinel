@@ -134,7 +134,7 @@ function deviceGroupsManager() {
         async loadGroups() {
             try {
                 const response = await fetch('/api/v1/device-groups', {
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
@@ -185,7 +185,7 @@ function deviceGroupsManager() {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(payload)
                 });
@@ -204,7 +204,7 @@ function deviceGroupsManager() {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(payload)
                 });

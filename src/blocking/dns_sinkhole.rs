@@ -1,11 +1,14 @@
 use parking_lot::RwLock;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::UdpSocket;
 
 use crate::blocking::blocklist::Blocklist;
+use crate::utils::LruCache;
 
+#[derive(Clone)]
 struct CachedResponse {
     data: Vec<u8>,
     expires_at: Instant,
@@ -26,13 +29,12 @@ impl CachedResponse {
 
 pub struct DnsSinkhole {
     blocklist: Arc<Blocklist>,
-    blocked_count: RwLock<u64>,
-    query_count: RwLock<u64>,
+    blocked_count: AtomicU64,
+    query_count: AtomicU64,
     allow_fallback: bool,
     platform_supported: RwLock<bool>,
-    cache: RwLock<HashMap<String, CachedResponse>>,
+    cache: RwLock<LruCache<String, CachedResponse>>,
     query_log: RwLock<VecDeque<DnsQueryRecord>>,
-    cache_clean_counter: RwLock<u64>,
 }
 
 impl DnsSinkhole {
@@ -41,13 +43,12 @@ impl DnsSinkhole {
 
         Self {
             blocklist,
-            blocked_count: RwLock::new(0),
-            query_count: RwLock::new(0),
+            blocked_count: AtomicU64::new(0),
+            query_count: AtomicU64::new(0),
             allow_fallback,
             platform_supported: RwLock::new(platform_supported),
-            cache: RwLock::new(HashMap::with_capacity(1000)),
+            cache: RwLock::new(LruCache::new(10000)),
             query_log: RwLock::new(VecDeque::with_capacity(5000)),
-            cache_clean_counter: RwLock::new(0),
         }
     }
 
@@ -131,7 +132,7 @@ impl DnsSinkhole {
         let domain = self.extract_domain(packet)?;
         let domain_lower = domain.to_lowercase();
 
-        // Check cache first
+        // Check cache first - use read lock for lookups
         {
             let cache = self.cache.read();
             if let Some(cached) = cache.get(&domain_lower) {
@@ -141,20 +142,8 @@ impl DnsSinkhole {
             }
         }
 
-        // Periodically clean expired entries from cache (every 100 queries)
-        {
-            let mut counter = self.cache_clean_counter.write();
-            *counter += 1;
-            if *counter >= 100 {
-                *counter = 0;
-                drop(counter);
-                let mut cache = self.cache.write();
-                cache.retain(|_, v| !v.is_expired());
-            }
-        }
-
-        // Count query only once (removed duplicate from run_udp)
-        *self.query_count.write() += 1;
+        // Count query atomically
+        self.query_count.fetch_add(1, Ordering::Relaxed);
 
         let is_blocked = self.blocklist.is_blocked(&domain_lower);
 
@@ -184,7 +173,7 @@ impl DnsSinkhole {
         tracing::debug!("DNS query for: {} from {}", domain_lower, client_ip);
 
         let response = if is_blocked {
-            *self.blocked_count.write() += 1;
+            self.blocked_count.fetch_add(1, Ordering::Relaxed);
             tracing::info!("Blocked DNS query for: {} from {}", domain_lower, client_ip);
             self.create_nxdomain_response(id, &question_section)
         } else if self.allow_fallback {
@@ -302,8 +291,8 @@ impl DnsSinkhole {
 
     pub fn stats(&self) -> DnsStats {
         DnsStats {
-            queries: *self.query_count.read(),
-            blocked: *self.blocked_count.read(),
+            queries: self.query_count.load(Ordering::Relaxed),
+            blocked: self.blocked_count.load(Ordering::Relaxed),
             platform_supported: *self.platform_supported.read(),
             cache_size: self.cache.read().len(),
         }

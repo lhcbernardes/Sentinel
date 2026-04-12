@@ -34,6 +34,13 @@ pub struct DpiStats {
 pub struct DpiEngine {
     stats: Arc<RwLock<DpiStats>>,
     rules: Arc<RwLock<Vec<DpiRule>>>,
+    email_regex: regex::Regex,
+    phone_regex: regex::Regex,
+    cpf_regex: regex::Regex,
+    credit_card_regex: regex::Regex,
+    ssn_regex: regex::Regex,
+    password_regex: regex::Regex,
+    api_key_regex: regex::Regex,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +113,15 @@ impl DpiEngine {
         Self {
             stats: Arc::new(RwLock::new(DpiStats::default())),
             rules: Arc::new(RwLock::new(rules)),
+            email_regex: regex::Regex::new(r"[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}").unwrap(),
+            phone_regex: regex::Regex::new(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b").unwrap(),
+            cpf_regex: regex::Regex::new(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b").unwrap(),
+            credit_card_regex: regex::Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b")
+                .unwrap(),
+            ssn_regex: regex::Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").unwrap(),
+            password_regex: regex::Regex::new(r"(?i)(password|passwd|pwd)\s*[=:]\s*\S+").unwrap(),
+            api_key_regex: regex::Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[\w-]{20,}")
+                .unwrap(),
         }
     }
 
@@ -156,17 +172,14 @@ impl DpiEngine {
 
     fn detect_pii(&self, data: &str) -> (bool, Vec<String>) {
         let mut pii_types = Vec::new();
-        let email_regex = regex::Regex::new(r"[\w.%+-]+@[\w.-]+\.[a-zA-Z]{2,}").unwrap();
-        let phone_regex = regex::Regex::new(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b").unwrap();
-        let cpf_regex = regex::Regex::new(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b").unwrap();
 
-        if email_regex.is_match(data) {
+        if self.email_regex.is_match(data) {
             pii_types.push("Email".to_string());
         }
-        if phone_regex.is_match(data) {
+        if self.phone_regex.is_match(data) {
             pii_types.push("Phone".to_string());
         }
-        if cpf_regex.is_match(data) {
+        if self.cpf_regex.is_match(data) {
             pii_types.push("CPF".to_string());
         }
 
@@ -176,9 +189,7 @@ impl DpiEngine {
     fn detect_sensitive_data(&self, data: &str) -> Vec<SensitiveData> {
         let mut results = Vec::new();
 
-        let credit_card_regex =
-            regex::Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b").unwrap();
-        if let Some(m) = credit_card_regex.find(data) {
+        if let Some(m) = self.credit_card_regex.find(data) {
             results.push(SensitiveData {
                 data_type: "Credit Card".to_string(),
                 value: format!("****-****-****-{}", &m.as_str()[12..]),
@@ -187,8 +198,7 @@ impl DpiEngine {
             });
         }
 
-        let ssn_regex = regex::Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").unwrap();
-        if let Some(m) = ssn_regex.find(data) {
+        if let Some(m) = self.ssn_regex.find(data) {
             results.push(SensitiveData {
                 data_type: "SSN".to_string(),
                 value: format!("***-**-{}", &m.as_str()[m.len() - 4..]),
@@ -197,8 +207,7 @@ impl DpiEngine {
             });
         }
 
-        let password_regex = regex::Regex::new(r"(?i)(password|passwd|pwd)\s*[=:]\s*\S+").unwrap();
-        if let Some(m) = password_regex.find(data) {
+        if let Some(m) = self.password_regex.find(data) {
             results.push(SensitiveData {
                 data_type: "Password".to_string(),
                 value: "***".to_string(),
@@ -207,9 +216,7 @@ impl DpiEngine {
             });
         }
 
-        let api_key_regex =
-            regex::Regex::new(r"(?i)(api[_-]?key|apikey)\s*[=:]\s*[\w-]{20,}").unwrap();
-        if let Some(m) = api_key_regex.find(data) {
+        if let Some(m) = self.api_key_regex.find(data) {
             results.push(SensitiveData {
                 data_type: "API Key".to_string(),
                 value: "***".to_string(),

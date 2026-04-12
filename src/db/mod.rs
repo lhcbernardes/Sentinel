@@ -20,12 +20,16 @@ impl Database {
         // Performance pragmas: WAL mode for concurrent reads+writes,
         // NORMAL sync for better write throughput with reasonable safety,
         // busy_timeout to retry on lock contention instead of failing immediately.
+        // mmap_size for memory-mapped I/O, page_size optimization.
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
              PRAGMA busy_timeout = 5000;
-             PRAGMA cache_size = -8000;
-             PRAGMA foreign_keys = ON;",
+             PRAGMA cache_size = -16000;
+             PRAGMA foreign_keys = ON;
+             PRAGMA mmap_size = 268435456;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA page_size = 4096;",
         )
         .map_err(|e| format!("Failed to set database pragmas: {}", e))?;
 
@@ -210,7 +214,7 @@ impl Database {
         Ok(())
     }
 
-    /// Batch insert packets using multi-row INSERT wrapped in transaction for better performance.
+    /// Batch insert packets using parameterized queries within a transaction for better performance and security.
     pub fn save_packets_batch(&self, packets: &[crate::sniffer::PacketInfo]) {
         if packets.is_empty() {
             return;
@@ -218,55 +222,49 @@ impl Database {
 
         let conn = self.conn.lock();
 
-        // Start transaction
         if let Err(e) = conn.execute_batch("BEGIN") {
             tracing::warn!("Failed to begin transaction for batch insert: {}", e);
             return;
         }
 
-        // Build the multi-row INSERT statement
-        let mut values = Vec::with_capacity(packets.len() * 100);
+        // Use prepare_cached for statement reuse across calls
+        let mut stmt = match conn.prepare_cached(
+            "INSERT INTO packets (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, size, src_mac, dst_mac) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+        ) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                tracing::warn!("Failed to prepare statement for batch insert: {}", e);
+                let _ = conn.execute_batch("ROLLBACK");
+                return;
+            }
+        };
+
         for packet in packets {
             let src_ip = packet.src_ip.to_string();
             let dst_ip = packet.dst_ip.to_string();
             let protocol = packet.protocol.to_string();
             let src_port = packet.src_port.unwrap_or(0);
             let dst_port = packet.dst_port.unwrap_or(0);
-            let src_mac = packet.src_mac.as_deref().unwrap_or("").replace('\'', "''");
-            let dst_mac = packet.dst_mac.as_deref().unwrap_or("").replace('\'', "''");
+            let src_mac = packet.src_mac.clone();
+            let dst_mac = packet.dst_mac.clone();
 
-            // Escape single quotes in string values
-            let src_ip_escaped = src_ip.replace('\'', "''");
-            let dst_ip_escaped = dst_ip.replace('\'', "''");
-            let protocol_escaped = protocol.replace('\'', "''");
-
-            values.push(format!(
-                "({}, '{}', '{}', {}, {}, '{}', {}, '{}', '{}')",
+            if let Err(e) = stmt.execute(params![
                 packet.timestamp,
-                src_ip_escaped,
-                dst_ip_escaped,
+                src_ip,
+                dst_ip,
                 src_port,
                 dst_port,
-                protocol_escaped,
+                protocol,
                 packet.size,
                 src_mac,
-                dst_mac
-            ));
+                dst_mac,
+            ]) {
+                tracing::warn!("Failed to insert packet: {}", e);
+                let _ = conn.execute_batch("ROLLBACK");
+                return;
+            }
         }
 
-        let query = format!(
-            "INSERT INTO packets (timestamp, src_ip, dst_ip, src_port, dst_port, protocol, size, src_mac, dst_mac) VALUES {}",
-            values.join(",")
-        );
-
-        // Execute the batch insert
-        if let Err(e) = conn.execute_batch(&query) {
-            tracing::warn!("Failed to batch insert packets: {}", e);
-            let _ = conn.execute_batch("ROLLBACK");
-            return;
-        }
-
-        // Commit transaction
         if let Err(e) = conn.execute_batch("COMMIT") {
             tracing::warn!("Failed to commit batch insert transaction: {}", e);
         }

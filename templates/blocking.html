@@ -166,12 +166,10 @@
 
 {% block extra_scripts %}
 <script>
-    const authToken = localStorage.getItem('sentinel_token') || '';
-
     function unblockIp(ip) {
         fetch('/api/unblock-ip', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ip: ip})
         }).then(() => location.reload());
     }
@@ -183,7 +181,7 @@
         
         fetch('/api/add-block', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({entry: value})
         }).then(() => {
             input.value = '';
@@ -194,7 +192,7 @@
     function updateConfig(key, value) {
         fetch('/api/update-config', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken},
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({key: key, value: value})
         });
     }
@@ -207,8 +205,7 @@
         status.innerHTML = '<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-cyber-warn animate-pulse"></span><span class="text-cyber-warn">Downloading blocklists...</span></div>';
 
         fetch('/api/update-blocklists', {
-            method: 'POST',
-            headers: {'Authorization': 'Bearer ' + authToken}
+            method: 'POST'
         })
             .then(res => res.json())
             .then(data => {

@@ -93,14 +93,65 @@ Make sure to replace `SENTINEL_JWT_SECRET` and `SENTINEL_ADMIN_PASSWORD` in your
 > Password requirements: min 8 chars, 1 uppercase, 1 digit, 1 special character.
 
 ### 3. Build & Run
+
+#### macOS
 ```bash
-# Build binary
+# Identificar interface de rede
+networksetup -listallhardwareports
+
+# Build
 cargo build
 
-# Run application locally with full Network Privileges
-sudo -E cargo run
+# Run (sudo necessário para captura de pacotes)
+sudo -E INTERFACE=en0 cargo run
+
+# Ou usar script automático
+./run.sh mac
 ```
-*Note: Due to libpcap hardware hooks, if you start Sentinel-RS without `sudo`, the web interface will continue running for demo purposes, but the packet sniffer core will silently log a permission denied error without panicking.*
+
+#### Linux
+```bash
+# Identificar interface de rede
+ip link show
+
+# Instalar dependências (Debian/Ubuntu)
+sudo apt install libpcap-dev
+
+# Build
+cargo build
+
+# Run (sudo necessário para captura de pacotes)
+sudo -E INTERFACE=eth0 cargo run
+
+# Ou usar script automático
+./run.sh linux
+```
+
+#### Windows
+```bash
+# Instalar Npcap: https://npcap.com/dist/npcap.exe
+# Escolha "Install Npcap 1.0" (sem "Install WinPcap API Compatible" se não precisar)
+
+# Identificar interface (Execute como Administrador)
+ipconfig
+
+# Setar variável de ambiente para usar Npcap
+set INTERFACE="Ethernet"
+
+# Build
+cargo build
+
+# Run (executar como Administrador)
+set INTERFACE="Ethernet" && cargo run
+
+# Ou usar script automático
+run.bat
+```
+
+#### ⚠️ Notas Importantes
+- **Sem sudo/admin**: O servidor web continua funcionando, mas o sniffer de pacotes mostrará erro de permissão.
+- **Interface padrão**: macOS usa `en0`, Linux usa `eth0`, Windows usa o nome do adaptador.
+- **Credenciais padrão**: `admin` / `Sentinel@2024`
 
 ---
 

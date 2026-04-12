@@ -209,7 +209,7 @@ function notificationsManager() {
         async loadConfig() {
             try {
                 const response = await fetch('/api/v1/notifications/config', {
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
@@ -226,7 +226,7 @@ function notificationsManager() {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(this.config)
                 });
@@ -239,7 +239,7 @@ function notificationsManager() {
             try {
                 const response = await fetch('/api/v1/notifications/test/' + channel, {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success) {

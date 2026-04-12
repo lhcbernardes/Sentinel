@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod sniffer;
 pub mod stats;
 pub mod threatintel;
+pub mod utils;
 pub mod web;
 
 use parking_lot::RwLock;
@@ -35,8 +36,10 @@ pub use notifications::NotificationManager;
 pub use sniffer::dpi::DpiEngine;
 pub use sniffer::netflow::NetFlowRecord;
 pub use sniffer::packet::PacketInfo;
+pub use sniffer::{PacketPool, PooledPacketInfo};
 pub use stats::{NetworkStats, StatsManager};
 pub use threatintel::ThreatIntelligence;
+pub use utils::{LruCache, WorkStealingQueue};
 
 /// Maximum number of packets to keep in the in-memory cache.
 const PACKET_CACHE_SIZE: usize = 1000;

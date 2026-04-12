@@ -112,13 +112,20 @@ function dnsQueriesManager() {
             try {
                 const response = await fetch('/api/v1/dns/queries');
                 const data = await response.json();
-                if (data.success && data.data) {
+                if (data.success && Array.isArray(data.data)) {
                     this.queries = data.data;
                     this.filterQueries();
+                    this.updateStats();
+                } else {
+                    this.queries = [];
+                    this.filteredQueries = [];
                     this.updateStats();
                 }
             } catch (error) {
                 console.error('Failed to load queries:', error);
+                this.queries = [];
+                this.filteredQueries = [];
+                this.updateStats();
             }
         },
 

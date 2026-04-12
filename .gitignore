@@ -17,6 +17,8 @@ data/
 *.db
 *.db-shm
 *.db-wal
+agents/
+theme/
 
 # Logs
 /logs/

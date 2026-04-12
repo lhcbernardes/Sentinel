@@ -21,6 +21,8 @@ pcap = "2"
 etherparse = "0.19"
 
 rusqlite = { version = "0.33", features = ["bundled"] }
+ahash = "0.7"
+indexmap = "2"
 
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
@@ -34,6 +36,7 @@ futures-util = "0.3"
 futures = "0.3"
 rayon = "1.10"
 crossbeam-channel = "0.5"
+crossbeam-deque = "0.8"
 ipnetwork = "0.20"
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "json"], default-features = false }
 base64 = "0.22"
@@ -43,10 +46,15 @@ jsonwebtoken = "9"
 url = "2"
 thiserror = "2"
 glob = "0.3"
+num_cpus = "1.16"
+memmap2 = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
 criterion = "0.5"
+rustls-native-certs = "0.7"
+rand = "0.8"
+base64 = "0.22"
 
 [features]
 default = []
@@ -58,9 +66,6 @@ debug = true
 [[bin]]
 name = "sentinel-rs"
 path = "src/main.rs"
-
-[include]
-include = ["templates/"]
 
 [lib]
 name = "sentinel_rs"

@@ -47,21 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Using interface: {}", interface);
 
-    // Initialize OUI database
-    let oui_path = get_oui_path();
-    if oui_path.exists() {
-        match oui::load_oui_database(&oui_path) {
-            Ok(()) => info!("OUI database loaded from {:?}", oui_path),
-            Err(e) => info!("OUI database error: {}", e),
-        }
-    } else {
-        info!(
-            "OUI file not found at {:?} - skipping manufacturer lookup",
-            oui_path
-        );
-    }
-
-    // Initialize database
+    // Initialize database path first
     let db_path = std::env::var("DB_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("data/sentinel.db"));
@@ -72,6 +58,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Initialize OUI database in a separate thread (non-blocking)
+    let oui_path = get_oui_path();
+    let _oui_handle = std::thread::spawn(move || {
+        if oui_path.exists() {
+            match oui::load_oui_database(&oui_path) {
+                Ok(()) => info!("OUI database loaded from {:?}", oui_path),
+                Err(e) => info!("OUI database error: {}", e),
+            }
+        } else {
+            info!(
+                "OUI file not found at {:?} - skipping manufacturer lookup",
+                oui_path
+            );
+        }
+    });
+
+    // Initialize database (can run in parallel with OUI loading)
     let database =
         Arc::new(db::Database::new(&db_path).map_err(|e| format!("Database error: {}", e))?);
     info!("Database initialized at {:?}", db_path);
@@ -83,24 +86,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize blocking components
     let blocklist = Arc::new(blocking::Blocklist::new());
-    blocklist.load_default_lists();
-
-    // Load blocklists from files if they exist
-    let blocklists_dir = PathBuf::from("data/blocklists");
-    if blocklists_dir.exists() {
-        if let Ok(count) = blocklist.load_from_file(
-            &blocklists_dir.join("trackers.txt"),
-            blocking::BlockType::Tracker,
-        ) {
-            info!("Loaded {} tracker domains", count);
+    
+    // Load blocklists in parallel
+    let blocklist_clone = blocklist.clone();
+    let blocklist_handle = std::thread::spawn(move || {
+        blocklist_clone.load_default_lists();
+        let blocklists_dir = PathBuf::from("data/blocklists");
+        if blocklists_dir.exists() {
+            if let Ok(count) = blocklist_clone.load_from_file(
+                &blocklists_dir.join("trackers.txt"),
+                blocking::BlockType::Tracker,
+            ) {
+                info!("Loaded {} tracker domains", count);
+            }
+            if let Ok(count) = blocklist_clone.load_from_file(
+                &blocklists_dir.join("malware.txt"),
+                blocking::BlockType::Malware,
+            ) {
+                info!("Loaded {} malware domains", count);
+            }
         }
-        if let Ok(count) = blocklist.load_from_file(
-            &blocklists_dir.join("malware.txt"),
-            blocking::BlockType::Malware,
-        ) {
-            info!("Loaded {} malware domains", count);
-        }
-    }
+    });
 
     let dns_sinkhole_enabled = std::env::var("DNS_ENABLED")
         .map(|v| v == "true")
@@ -119,6 +125,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         blocklist.clone(),
         "SENTINEL-RS",
     ));
+
+    // Wait for blocklist loading to complete
+    let _ = blocklist_handle.join();
+    // OUI loading is running in background, don't wait for it
 
     if firewall_enabled {
         if let Err(e) = firewall.init() {

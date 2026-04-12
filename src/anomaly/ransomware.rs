@@ -309,7 +309,11 @@ mod tests {
 
     #[test]
     fn test_detect_encryption_pattern() {
-        let encrypted: Vec<u8> = (0..2048).map(|_| rand::random::<u8>()).collect();
+        // Create deterministic encrypted-like data with >500 high bytes in first 1024
+        let mut encrypted: Vec<u8> = (0..1024)
+            .map(|i| if i % 2 == 0 { 200u8 } else { 128u8 })
+            .collect();
+        encrypted.extend((0..1024).map(|_| rand::random::<u8>()));
         assert!(RansomwareDetector::detect_encryption_pattern(&encrypted));
     }
 

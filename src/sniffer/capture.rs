@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,6 +10,25 @@ use crate::devices::DeviceManager;
 use crate::sniffer::packet::{PacketInfo, Protocol};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tokio::sync::broadcast;
+
+thread_local! {
+    static MAC_BUFFER: RefCell<(String, String)> = RefCell::new((
+        String::with_capacity(17),
+        String::with_capacity(17),
+    ));
+}
+
+#[inline]
+fn format_mac_fast(bytes: &[u8; 6], buf: &mut String) {
+    use std::fmt::Write;
+    buf.clear();
+    write!(
+        buf,
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+    )
+    .unwrap();
+}
 
 pub struct Sniffer {
     interface: String,
@@ -309,17 +329,13 @@ fn parse_packet(data: &[u8]) -> Option<PacketInfo> {
         _ => return None,
     };
 
-    // Optimize MAC address formatting to avoid String allocation when possible
     let (src_mac, dst_mac) = if data.len() >= 12 {
-        let src_mac = Some(format!(
-            "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            data[0], data[1], data[2], data[3], data[4], data[5]
-        ));
-        let dst_mac = Some(format!(
-            "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            data[6], data[7], data[8], data[9], data[10], data[11]
-        ));
-        (src_mac, dst_mac)
+        MAC_BUFFER.with(|buffer| {
+            let mut buf = buffer.borrow_mut();
+            format_mac_fast(&data[0..6].try_into().unwrap(), &mut buf.0);
+            format_mac_fast(&data[6..12].try_into().unwrap(), &mut buf.1);
+            (Some(buf.0.clone()), Some(buf.1.clone()))
+        })
     } else {
         (None, None)
     };

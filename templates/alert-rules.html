@@ -194,7 +194,7 @@ function alertRulesManager() {
         async loadRules() {
             try {
                 const response = await fetch('/api/v1/alerts/rules', {
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
@@ -241,7 +241,7 @@ function alertRulesManager() {
                     method,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(this.formData)
                 });
@@ -267,7 +267,7 @@ function alertRulesManager() {
             try {
                 const response = await fetch('/api/v1/alerts/rules/' + rule.id, {
                     method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success) {

@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
     <title>{% block title %}Sentinel-RS{% endblock %}</title>
     <!-- TailwindCSS v3 CDN with Custom Config -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -45,8 +46,8 @@
     </script>
     <!-- Google Fonts Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
     <script>
         const i18n = {
             locale: localStorage.getItem('locale') || 'en',
@@ -54,15 +55,11 @@
                 en: {
                     dashboard: 'Dashboard',
                     blocking: 'Blocking',
-                    devices: 'Devices',
-                    alerts: 'Alerts',
-                    packets: 'Packets',
                     dns_queries: 'DNS',
                     parental: 'Parental',
                     rules: 'Rules',
                     users: 'Users',
                     backups: 'Backups',
-                    settings: 'Settings',
                     notifications: 'Notifications',
                     threat_intel: 'Threat Intel',
                     device_groups: 'Device Groups',
@@ -74,6 +71,7 @@
                     disconnected: 'Disconnected',
                     total_packets: 'Total Packets',
                     active_devices: 'Active Devices',
+                    alerts: 'Alerts',
                     bandwidth: 'Bandwidth',
                     traffic_over_time: 'Traffic Over Time',
                     protocol_distribution: 'Protocol Distribution',
@@ -95,6 +93,7 @@
                     custom_rules: 'Custom Rules',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Language',
+                    settings: 'Settings',
                     update_blocklists: 'Update Blocklists',
                     blocklist_updated: 'Blocklists updated successfully',
                     no_data: 'No data'
@@ -102,15 +101,11 @@
                 pt: {
                     dashboard: 'Painel',
                     blocking: 'Bloqueio',
-                    devices: 'Dispositivos',
-                    alerts: 'Alertas',
-                    packets: 'Pacotes',
                     dns_queries: 'DNS',
                     parental: 'Parental',
                     rules: 'Regras',
                     users: 'Usuários',
                     backups: 'Backups',
-                    settings: 'Configurações',
                     notifications: 'Notificações',
                     threat_intel: 'Inteligência de Ameaças',
                     device_groups: 'Grupos de Dispositivos',
@@ -122,6 +117,7 @@
                     disconnected: 'Desconectado',
                     total_packets: 'Total de Pacotes',
                     active_devices: 'Dispositivos Ativos',
+                    alerts: 'Alertas',
                     bandwidth: 'Largura de Banda',
                     traffic_over_time: 'Tráfego (Linha do Tempo)',
                     protocol_distribution: 'Distribuição de Protocolos',
@@ -143,6 +139,7 @@
                     custom_rules: 'Regras Personalizadas',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Idioma',
+                    settings: 'Configurações',
                     update_blocklists: 'Atualizar Blocklists',
                     blocklist_updated: 'Blocklists atualizadas com sucesso',
                     no_data: 'Sem dados'
@@ -150,15 +147,11 @@
                 es: {
                     dashboard: 'Panel',
                     blocking: 'Bloqueo',
-                    devices: 'Dispositivos',
-                    alerts: 'Alertas',
-                    packets: 'Paquetes',
                     dns_queries: 'DNS',
                     parental: 'Parental',
                     rules: 'Reglas',
                     users: 'Usuarios',
                     backups: 'Backups',
-                    settings: 'Configuración',
                     notifications: 'Notificaciones',
                     threat_intel: 'Inteligencia de Amenazas',
                     device_groups: 'Grupos de Dispositivos',
@@ -170,6 +163,7 @@
                     disconnected: 'Desconectado',
                     total_packets: 'Total de Paquetes',
                     active_devices: 'Dispositivos Activos',
+                    alerts: 'Alertas',
                     bandwidth: 'Ancho de Banda',
                     traffic_over_time: 'Tráfico en el Tiempo',
                     protocol_distribution: 'Distribución de Protocolos',
@@ -191,6 +185,7 @@
                     custom_rules: 'Reglas Personalizadas',
                     dns_sinkhole: 'DNS Sinkhole',
                     language: 'Idioma',
+                    settings: 'Configuración',
                     update_blocklists: 'Actualizar Blocklists',
                     blocklist_updated: 'Listas Negras actualizadas',
                     no_data: 'Sin datos'
@@ -212,6 +207,24 @@
             }
         };
         document.addEventListener('DOMContentLoaded', () => i18n.init());
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(url, options = {}) {
+            const token = localStorage.getItem('auth_token');
+            if (token) {
+                options.headers = {
+                    ...options.headers,
+                    'Authorization': `Bearer ${token}`
+                };
+            }
+            const response = await originalFetch(url, options);
+            if (response.status === 401) {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('user');
+                window.location.href = '/login';
+            }
+            return response;
+        };
     </script>
     <style>
         /* Base Styling & Scrollbar */
@@ -252,18 +265,12 @@
             display: none;
             position: absolute;
             right: 0;
-            top: 100%;
-            margin-top: 0.5rem;
             min-width: 180px;
             z-index: 100;
         }
-
-        .dropdown:hover .dropdown-menu,
         .dropdown-menu.show {
             display: block;
         }
-
-        [x-cloak] { display: none !important; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -320,8 +327,11 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                         </svg>
                         <span data-i18n="settings">Settings</span>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
                     </button>
-                    <div class="dropdown-menu glass-panel rounded-lg shadow-xl border border-gray-700/50 py-2">
+                    <div class="dropdown-menu glass-panel rounded-lg shadow-xl border border-gray-700/50 py-2 mt-2">
                         <a href="/notifications" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="notifications">Notifications</a>
                         <a href="/threat-intel" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="threat_intel">Threat Intel</a>
                         <a href="/device-groups" class="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/50 transition-colors" data-i18n="device_groups">Device Groups</a>
@@ -346,22 +356,41 @@
                     <option value="pt">PT</option>
                     <option value="es">ES</option>
                 </select>
+
+                <button onclick="logout()" class="text-sm font-medium text-gray-400 hover:text-cyber-danger transition-colors flex items-center gap-1" title="Logout">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                    </svg>
+                </button>
             </div>
         </div>
     </nav>
 
     <!-- Main Viewport -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative">
-        <!-- Floating decorative element -->
-        <div class="absolute top-0 right-0 -mt-20 -mr-20 w-96 h-96 bg-cyber-primary/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div class="absolute bottom-0 left-0 -mb-20 -ml-20 w-96 h-96 bg-cyber-accent/10 rounded-full blur-3xl pointer-events-none"></div>
-
-        <div class="relative z-10 w-full">
-            {% block content %}{% endblock %}
-        </div>
+        {% block content %}{% endblock %}
     </main>
 
     <script>
+        function logout() {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('user');
+            window.location.href = '/login';
+        }
+
+        // Dropdown toggle
+        document.addEventListener('click', function(e) {
+            const dropdown = e.target.closest('.dropdown');
+            const allDropdowns = document.querySelectorAll('.dropdown-menu');
+            
+            allDropdowns.forEach(menu => menu.classList.remove('show'));
+            
+            if (dropdown && e.target.closest('.dropdown button')) {
+                const menu = dropdown.querySelector('.dropdown-menu');
+                if (menu) menu.classList.add('show');
+            }
+        });
+
         const eventSource = new EventSource('/events');
 
         eventSource.addEventListener('packet', (e) => {
@@ -383,18 +412,6 @@
                 </div>
             `;
         };
-
-        document.querySelector('.dropdown').addEventListener('click', function(e) {
-            const menu = this.querySelector('.dropdown-menu');
-            menu.classList.toggle('show');
-            e.stopPropagation();
-        });
-
-        document.addEventListener('click', function() {
-            document.querySelectorAll('.dropdown-menu').forEach(menu => {
-                menu.classList.remove('show');
-            });
-        });
     </script>
     {% block extra_scripts %}{% endblock %}
 </body>

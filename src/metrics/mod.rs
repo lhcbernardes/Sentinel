@@ -1,13 +1,14 @@
 use parking_lot::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub struct MetricsExporter {
-    packets_total: RwLock<u64>,
-    bytes_total: RwLock<u64>,
-    alerts_total: RwLock<u64>,
-    blocked_queries: RwLock<u64>,
-    dns_queries: RwLock<u64>,
-    devices_seen: RwLock<u64>,
+    packets_total: AtomicU64,
+    bytes_total: AtomicU64,
+    alerts_total: AtomicU64,
+    blocked_queries: AtomicU64,
+    dns_queries: AtomicU64,
+    devices_seen: AtomicU64,
     requests_by_endpoint: RwLock<std::collections::HashMap<String, u64>>,
     response_times: RwLock<Vec<u64>>,
 }
@@ -15,39 +16,39 @@ pub struct MetricsExporter {
 impl MetricsExporter {
     pub fn new() -> Self {
         Self {
-            packets_total: RwLock::new(0),
-            bytes_total: RwLock::new(0),
-            alerts_total: RwLock::new(0),
-            blocked_queries: RwLock::new(0),
-            dns_queries: RwLock::new(0),
-            devices_seen: RwLock::new(0),
+            packets_total: AtomicU64::new(0),
+            bytes_total: AtomicU64::new(0),
+            alerts_total: AtomicU64::new(0),
+            blocked_queries: AtomicU64::new(0),
+            dns_queries: AtomicU64::new(0),
+            devices_seen: AtomicU64::new(0),
             requests_by_endpoint: RwLock::new(std::collections::HashMap::with_capacity(100)),
             response_times: RwLock::new(Vec::with_capacity(1000)),
         }
     }
 
     pub fn increment_packets(&self) {
-        *self.packets_total.write() += 1;
+        self.packets_total.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_bytes(&self, bytes: u64) {
-        *self.bytes_total.write() += bytes;
+        self.bytes_total.fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn increment_alerts(&self) {
-        *self.alerts_total.write() += 1;
+        self.alerts_total.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn increment_blocked_dns(&self) {
-        *self.blocked_queries.write() += 1;
+        self.blocked_queries.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn increment_dns_queries(&self) {
-        *self.dns_queries.write() += 1;
+        self.dns_queries.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn increment_devices(&self) {
-        *self.devices_seen.write() += 1;
+        self.devices_seen.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_request(&self, endpoint: &str) {
@@ -67,12 +68,12 @@ impl MetricsExporter {
     }
 
     pub fn get_metrics(&self) -> String {
-        let packets = *self.packets_total.read();
-        let bytes = *self.bytes_total.read();
-        let alerts = *self.alerts_total.read();
-        let blocked = *self.blocked_queries.read();
-        let dns = *self.dns_queries.read();
-        let devices = *self.devices_seen.read();
+        let packets = self.packets_total.load(Ordering::Relaxed);
+        let bytes = self.bytes_total.load(Ordering::Relaxed);
+        let alerts = self.alerts_total.load(Ordering::Relaxed);
+        let blocked = self.blocked_queries.load(Ordering::Relaxed);
+        let dns = self.dns_queries.load(Ordering::Relaxed);
+        let devices = self.devices_seen.load(Ordering::Relaxed);
 
         let endpoints = self.requests_by_endpoint.read();
 

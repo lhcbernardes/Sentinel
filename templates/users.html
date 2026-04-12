@@ -228,7 +228,6 @@ function userManagement() {
         passwordForm: { username: '', new_password: '' },
         deleteForm: { username: '' },
         notification: { show: false, message: '', type: 'success' },
-        authToken: localStorage.getItem('sentinel_token') || '',
         
         init() {
             this.loadUsers();
@@ -236,9 +235,7 @@ function userManagement() {
         
         async loadUsers() {
             try {
-                const res = await fetch('/api/v1/users', {
-                    headers: { 'Authorization': 'Bearer ' + this.authToken }
-                });
+                const res = await fetch('/api/v1/users');
                 if (!res.ok) throw new Error('Failed to load users');
                 this.users = await res.json();
                 this.updateStats();
@@ -286,8 +283,7 @@ function userManagement() {
                 const res = await fetch('/api/v1/users', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + this.authToken
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify(this.createForm)
                 });
@@ -308,8 +304,7 @@ function userManagement() {
                 const res = await fetch('/api/v1/users/' + this.editForm.username, {
                     method: 'PUT',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + this.authToken
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ role: this.editForm.role })
                 });
@@ -330,8 +325,7 @@ function userManagement() {
                 const res = await fetch('/api/v1/users/' + this.passwordForm.username + '/password', {
                     method: 'PUT',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + this.authToken
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({ password: this.passwordForm.new_password })
                 });
@@ -349,8 +343,7 @@ function userManagement() {
         async deleteUser() {
             try {
                 const res = await fetch('/api/v1/users/' + this.deleteForm.username, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': 'Bearer ' + this.authToken }
+                    method: 'DELETE'
                 });
                 if (!res.ok) {
                     const err = await res.json();

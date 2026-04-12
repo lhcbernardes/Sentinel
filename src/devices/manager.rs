@@ -33,19 +33,25 @@ impl DeviceManager {
     fn update_device(&self, mac: &str, packet: &PacketInfo) {
         let mut devices = self.devices.write();
 
-        let device = devices.entry(mac.to_string()).or_insert_with(|| {
-            let mut d = Device::new(mac.to_string());
-            d.manufacturer = lookup_manufacturer(mac);
+        let mac_key = if mac.bytes().all(|b| b.is_ascii_lowercase() || b == b':') {
+            mac.to_string()
+        } else {
+            mac.to_lowercase()
+        };
 
-            let is_local = is_local_mac(mac);
+        let device = devices.entry(mac_key.clone()).or_insert_with(|| {
+            let mut d = Device::new(mac_key.clone());
+            d.manufacturer = lookup_manufacturer(&mac_key);
+
+            let is_local = is_local_mac(&mac_key);
             d.is_local = is_local;
 
             if !is_local {
-                let alert = crate::anomaly::Alert::new_device(mac.to_string());
+                let alert = crate::anomaly::Alert::new_device(mac_key.clone());
                 let _ = self.alert_tx.send(alert);
             }
 
-            info!("New device detected: {}", mac);
+            info!("New device detected: {}", mac_key);
             d
         });
 

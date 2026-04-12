@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
+use ahash::RandomState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockType {
@@ -56,21 +57,36 @@ pub struct BlocklistStats {
     pub config: BlocklistConfig,
 }
 
+type AHashSet<T> = HashSet<T, RandomState>;
+
+struct BlocklistSets {
+    trackers: AHashSet<String>,
+    malware: AHashSet<String>,
+    attackers: AHashSet<String>,
+    custom: AHashSet<String>,
+}
+
+impl BlocklistSets {
+    fn new() -> Self {
+        let hasher = RandomState::new();
+        Self {
+            trackers: HashSet::with_capacity_and_hasher(50_000, hasher.clone()),
+            malware: HashSet::with_capacity_and_hasher(50_000, hasher.clone()),
+            attackers: HashSet::with_capacity_and_hasher(10_000, hasher.clone()),
+            custom: HashSet::with_capacity_and_hasher(1_000, hasher),
+        }
+    }
+}
+
 pub struct Blocklist {
-    trackers: RwLock<HashSet<String>>,
-    malware: RwLock<HashSet<String>>,
-    attackers: RwLock<HashSet<String>>,
-    custom: RwLock<HashSet<String>>,
+    sets: RwLock<BlocklistSets>,
     config: RwLock<BlocklistConfig>,
 }
 
 impl Blocklist {
     pub fn new() -> Self {
         Self {
-            trackers: RwLock::new(HashSet::with_capacity(50_000)),
-            malware: RwLock::new(HashSet::with_capacity(50_000)),
-            attackers: RwLock::new(HashSet::with_capacity(10_000)),
-            custom: RwLock::new(HashSet::with_capacity(1_000)),
+            sets: RwLock::new(BlocklistSets::new()),
             config: RwLock::new(BlocklistConfig::default()),
         }
     }
@@ -104,9 +120,9 @@ impl Blocklist {
             "amazon-adsystem.com",
         ];
 
-        let mut trackers = self.trackers.write();
+        let mut sets = self.sets.write();
         for domain in default_trackers {
-            trackers.insert(domain.to_string());
+            sets.trackers.insert(domain.to_string());
         }
 
         let default_malware = vec![
@@ -116,15 +132,14 @@ impl Blocklist {
             "exploit-kit.org",
         ];
 
-        let mut malware = self.malware.write();
         for domain in default_malware {
-            malware.insert(domain.to_string());
+            sets.malware.insert(domain.to_string());
         }
 
         tracing::info!(
             "Loaded default blocklists: {} trackers, {} malware",
-            trackers.len(),
-            malware.len()
+            sets.trackers.len(),
+            sets.malware.len()
         );
     }
 
@@ -138,44 +153,44 @@ impl Blocklist {
 
         let count = match block_type {
             BlockType::Tracker => {
-                let mut set = self.trackers.write();
+                let mut sets = self.sets.write();
                 for line in content.lines() {
                     let line = line.trim();
                     if !line.is_empty() && !line.starts_with('#') {
-                        set.insert(line.to_string());
+                        sets.trackers.insert(line.to_string());
                     }
                 }
-                set.len()
+                sets.trackers.len()
             }
             BlockType::Malware => {
-                let mut set = self.malware.write();
+                let mut sets = self.sets.write();
                 for line in content.lines() {
                     let line = line.trim();
                     if !line.is_empty() && !line.starts_with('#') {
-                        set.insert(line.to_string());
+                        sets.malware.insert(line.to_string());
                     }
                 }
-                set.len()
+                sets.malware.len()
             }
             BlockType::Attacker => {
-                let mut set = self.attackers.write();
+                let mut sets = self.sets.write();
                 for line in content.lines() {
                     let line = line.trim();
                     if !line.is_empty() && !line.starts_with('#') {
-                        set.insert(line.to_string());
+                        sets.attackers.insert(line.to_string());
                     }
                 }
-                set.len()
+                sets.attackers.len()
             }
             BlockType::Custom => {
-                let mut set = self.custom.write();
+                let mut sets = self.sets.write();
                 for line in content.lines() {
                     let line = line.trim();
                     if !line.is_empty() && !line.starts_with('#') {
-                        set.insert(line.to_string());
+                        sets.custom.insert(line.to_string());
                     }
                 }
-                set.len()
+                sets.custom.len()
             }
         };
 
@@ -238,79 +253,117 @@ impl Blocklist {
 
         match block_type {
             BlockType::Tracker => {
-                let mut set = self.trackers.write();
+                let mut sets = self.sets.write();
                 for domain in domains {
-                    set.insert(domain);
+                    sets.trackers.insert(domain);
                 }
-                Ok(set.len())
+                Ok(sets.trackers.len())
             }
             BlockType::Malware => {
-                let mut set = self.malware.write();
+                let mut sets = self.sets.write();
                 for domain in domains {
-                    set.insert(domain);
+                    sets.malware.insert(domain);
                 }
-                Ok(set.len())
+                Ok(sets.malware.len())
             }
             BlockType::Attacker => {
-                let mut set = self.attackers.write();
+                let mut sets = self.sets.write();
                 for domain in domains {
-                    set.insert(domain);
+                    sets.attackers.insert(domain);
                 }
-                Ok(set.len())
+                Ok(sets.attackers.len())
             }
             BlockType::Custom => {
-                let mut set = self.custom.write();
+                let mut sets = self.sets.write();
                 for domain in domains {
-                    set.insert(domain);
+                    sets.custom.insert(domain);
                 }
-                Ok(set.len())
+                Ok(sets.custom.len())
             }
         }
     }
 
     fn parse_blocklist(content: &str) -> Vec<String> {
-        let mut domains = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+        let count = lines.len();
+        
+        // Use parallel processing for large blocklists (>10k lines)
+        if count > 10_000 {
+            use rayon::prelude::*;
+            
+            lines.par_iter()
+                .filter_map(|line| {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        return None;
+                    }
 
-        for line in content.lines() {
-            let line = line.trim();
+                    let domain = if line.starts_with("0.0.0.0 ") || line.starts_with("127.0.0.1 ") {
+                        line.split_whitespace().nth(1).unwrap_or(line)
+                    } else if line.contains('/') {
+                        line.split('/').next().unwrap_or(line)
+                    } else {
+                        line
+                    };
 
-            if line.is_empty() || line.starts_with('#') {
-                continue;
+                    let domain = domain.trim();
+                    if !domain.is_empty() && domain.contains('.') {
+                        Some(domain.to_lowercase())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            // Sequential processing for smaller blocklists
+            let mut domains = Vec::new();
+            for line in lines {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+
+                let domain = if line.starts_with("0.0.0.0 ") || line.starts_with("127.0.0.1 ") {
+                    line.split_whitespace().nth(1).unwrap_or(line)
+                } else if line.contains('/') {
+                    line.split('/').next().unwrap_or(line)
+                } else {
+                    line
+                };
+
+                let domain = domain.trim();
+                if !domain.is_empty() && domain.contains('.') {
+                    domains.push(domain.to_lowercase());
+                }
             }
-
-            let domain = if line.starts_with("0.0.0.0 ") || line.starts_with("127.0.0.1 ") {
-                line.split_whitespace().nth(1).unwrap_or(line)
-            } else if line.contains('/') {
-                line.split('/').next().unwrap_or(line)
-            } else {
-                line
-            };
-
-            let domain = domain.trim();
-            if !domain.is_empty() && domain.contains('.') {
-                domains.push(domain.to_lowercase());
-            }
+            domains
         }
-
-        domains
     }
 
     pub fn is_blocked(&self, domain: &str) -> bool {
-        let domain_lower = domain.to_lowercase();
+        let domain_lower = if domain.bytes().all(|b| b.is_ascii_lowercase() || b == b'.' || b == b'-') {
+            domain.to_string()
+        } else {
+            domain.to_lowercase()
+        };
 
-        if self.config.read().block_trackers && self.trackers.read().contains(&domain_lower) {
+        let sets = self.sets.read();
+        let config = self.config.read();
+        
+        // Single lock acquisition for all checks
+        if config.block_trackers && sets.trackers.contains(&domain_lower) {
             return true;
         }
 
-        if self.config.read().block_malware && self.malware.read().contains(&domain_lower) {
+        if config.block_malware && sets.malware.contains(&domain_lower) {
             return true;
         }
 
-        if self.config.read().block_attackers && self.attackers.read().contains(&domain_lower) {
+        if config.block_attackers && sets.attackers.contains(&domain_lower) {
             return true;
         }
 
-        if self.custom.read().contains(&domain_lower) {
+        if sets.custom.contains(&domain_lower) {
             return true;
         }
 
@@ -318,21 +371,22 @@ impl Blocklist {
     }
 
     pub fn add_custom_block(&self, entry: String) {
-        let mut set = self.custom.write();
-        set.insert(entry);
+        let mut sets = self.sets.write();
+        sets.custom.insert(entry);
     }
 
     pub fn add_attacker(&self, entry: String) {
-        let mut set = self.attackers.write();
-        set.insert(entry);
+        let mut sets = self.sets.write();
+        sets.attackers.insert(entry);
     }
 
     pub fn stats(&self) -> BlocklistStats {
+        let sets = self.sets.read();
         BlocklistStats {
-            trackers: self.trackers.read().len(),
-            malware: self.malware.read().len(),
-            attackers: self.attackers.read().len(),
-            custom: self.custom.read().len(),
+            trackers: sets.trackers.len(),
+            malware: sets.malware.len(),
+            attackers: sets.attackers.len(),
+            custom: sets.custom.len(),
             config: self.config.read().clone(),
         }
     }

@@ -163,7 +163,7 @@ function threatIntelManager() {
         async loadStats() {
             try {
                 const response = await fetch('/api/v1/threatintel/stats', {
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
@@ -181,7 +181,7 @@ function threatIntelManager() {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify({ indicator: this.searchQuery })
                 });
@@ -202,7 +202,7 @@ function threatIntelManager() {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(this.config)
                 });
@@ -215,7 +215,7 @@ function threatIntelManager() {
             try {
                 await fetch('/api/v1/threatintel/update', {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 await this.loadStats();
                 alert('Feeds updated!');

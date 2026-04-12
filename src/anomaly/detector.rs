@@ -101,10 +101,12 @@ impl AnomalyDetector {
     pub fn analyze(&self, packet: &PacketInfo) {
         if packet.protocol == Protocol::Tcp {
             if let Some(dst_port) = packet.dst_port {
-                let mut detector = self.port_scan_detector.write();
+                let scan_alert = {
+                    let detector = self.port_scan_detector.read();
+                    detector.check(&packet.src_ip.to_string(), dst_port, true)
+                };
 
-                if let Some(scan_alert) = detector.check(&packet.src_ip.to_string(), dst_port, true)
-                {
+                if let Some(scan_alert) = scan_alert {
                     let alert = Alert::port_scan(scan_alert);
                     info!("{}", alert.message);
 
@@ -121,7 +123,7 @@ impl AnomalyDetector {
     }
 
     pub fn cleanup(&self) {
-        self.port_scan_detector.write().cleanup();
+        self.port_scan_detector.read().cleanup();
     }
 
     pub fn get_recent_alerts(&self) -> Vec<Alert> {

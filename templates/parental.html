@@ -140,7 +140,7 @@ function parentalManager() {
         async loadConfig() {
             try {
                 const response = await fetch('/api/v1/parental/config', {
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 const data = await response.json();
                 if (data.success && data.data) {
@@ -170,7 +170,7 @@ function parentalManager() {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify(this.config)
                 });
@@ -184,7 +184,7 @@ function parentalManager() {
             try {
                 await fetch('/api/v1/blocklist/update', {
                     method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '') }
+                    headers: {  }
                 });
                 alert('Blocklists updated!');
             } catch (error) {
@@ -198,7 +198,7 @@ function parentalManager() {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (localStorage.getItem('auth_token') || '')
+                        
                     },
                     body: JSON.stringify({ domain })
                 });
